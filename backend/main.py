@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session as DBSession
 from groq import Groq
-from modules.ocr import extract_text_from_image, extract_medicines_with_ai, medicines_to_speech
+from modules.ocr import extract_text_from_image, extract_medicines_with_ai, medicines_to_speech, is_non_tablet_prescription
 import os
 
 from database import engine, SessionLocal, Base
@@ -36,6 +36,7 @@ def get_db():
 def home():
     app_name = os.getenv("APP_NAME")
     return {"message": f"{app_name} backend is alive!"}
+
 
 @app.post("/register")
 def register_user(name: str, phone: str, language: str, db: DBSession = Depends(get_db)):
@@ -191,13 +192,23 @@ async def scan_prescription(
         return {"error": "Could not read text from image. Please try a clearer photo."}
 
     groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
-    medicines = extract_medicines_with_ai(raw_text, groq_client)
+    note = None
+    medicines = []
+
+    if is_non_tablet_prescription(raw_text):
+        note = "This prescription looks like IV/fluids/ORS instructions, not tablet medicines."
+    else:
+        medicines = extract_medicines_with_ai(raw_text, groq_client) or []
+        if not medicines:
+            note = "No tablet medicines found. Please verify your prescription."
+
     speech_text = medicines_to_speech(medicines, language)
 
     return {
         "raw_text": raw_text,
         "medicines": medicines,
-        "speech_text": speech_text
+        "speech_text": speech_text,
+        "note": note
     }
 @app.post("/upload-document/{user_id}")
 async def upload_document(
@@ -245,6 +256,78 @@ def get_documents(user_id: int, db: DBSession = Depends(get_db)):
         MedicalDocument.user_id == user_id
     ).order_by(MedicalDocument.uploaded_at.desc()).all()
 
+@app.get("/medicine-info")
+async def get_medicine_info(medicine: str, language: str = "english"):
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+    prompt = f"""You are a careful medical assistant.
+You are given a medicine name exactly as extracted from a prescription.
+If the medicine is known, explain what it is used for in one simple sentence.
+If the medicine is not known or you are not sure, respond only with: Unknown medicine.
+Write in {language} language. Keep it very simple for a non-literate rural person to understand when read aloud.
+Do not include any medical jargon. Max 15 words."""
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        max_tokens=50,
+        temperature=0
+    )
+
+    description = response.choices[0].message.content.strip()
+    if "unknown" in description.lower():
+        description = ""
+
+    return {"description": description}
+@app.post("/identify-tablet")
+async def identify_tablet(file: UploadFile = File(...)):
+    import base64
+    image_bytes = await file.read()
+    image_b64 = base64.b64encode(image_bytes).decode()
+
+    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+    ocr_text = extract_text_from_image(image_bytes)
+    if ocr_text:
+        ocr_text = ocr_text.replace("\n", " ").strip()
+
+    prompt_text = """Look at this medicine/tablet image and the extracted text from it.
+If the medicine name is visible on the packaging or tablet, identify it.
+If the extracted text contains the medicine name, use that.
+Return JSON only: {"medicine": "name", "description": "what it is used for in simple words", "found": true/false}"""
+
+    if ocr_text:
+        prompt_text += f"\n\nOCR text: {ocr_text}"
+
+    response = client.chat.completions.create(
+        model="meta-llama/llama-4-scout-17b-16e-instruct",
+        messages=[{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{image_b64}"
+                    }
+                },
+                {
+                    "type": "text",
+                    "text": prompt_text
+                }
+            ]
+        }],
+        max_tokens=150,
+        temperature=0
+    )
+
+    try:
+        import json
+        result = response.choices[0].message.content.strip()
+        result = result.replace("```json", "").replace("```", "").strip()
+        return json.loads(result)
+    except Exception as e:
+        print(f"Tablet identify parsing error: {e}")
+        return {"found": False, "medicine": "", "description": ""}
     return {"documents": [
         {
             "id": d.id,
