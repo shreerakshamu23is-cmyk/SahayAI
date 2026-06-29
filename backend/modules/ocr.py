@@ -41,12 +41,30 @@ def preprocess_image(image_bytes):
 def extract_text_from_image(image_bytes):
     try:
         processed = preprocess_image(image_bytes)
-        text = pytesseract.image_to_string(
-            processed,
-            config='--psm 6'
-        )
-        text = fix_medical_abbreviations(text)
-        return text.strip()
+        inverted = cv2.bitwise_not(processed)
+        configs = [
+            '--oem 1 --psm 6',
+            '--oem 1 --psm 11',
+            '--oem 1 --psm 3',
+            '--oem 1 --psm 4'
+        ]
+
+        best_text = ""
+        images = [processed, inverted]
+
+        for img in images:
+            for cfg in configs:
+                text = pytesseract.image_to_string(img, lang='eng', config=cfg)
+                text = text.replace('\x0c', ' ').strip()
+                text = fix_medical_abbreviations(text)
+                if len(text.split()) > len(best_text.split()):
+                    best_text = text
+
+        if not best_text:
+            text = pytesseract.image_to_string(processed, lang='eng')
+            best_text = fix_medical_abbreviations(text.replace('\x0c', ' ').strip())
+
+        return best_text.strip() if best_text else None
     except Exception as e:
         print(f"OCR error: {e}")
         return None
@@ -59,6 +77,8 @@ def fix_medical_abbreviations(text):
         r'\bBD\b': 'twice daily',
         r'\bTID\b': 'three times daily',
         r'\btid\b': 'three times daily',
+        r'\bTDS\b': 'three times daily',
+        r'\btds\b': 'three times daily',
         r'\bTDD\b': 'three times daily',
         r'\bQD\b': 'once daily',
         r'\bqd\b': 'once daily',
@@ -66,6 +86,12 @@ def fix_medical_abbreviations(text):
         r'\bod\b': 'once daily',
         r'\bQID\b': 'four times daily',
         r'\bqid\b': 'four times daily',
+        r'\bQ6H\b': 'four times daily',
+        r'\bq6h\b': 'four times daily',
+        r'\bQ4H\b': 'six times daily',
+        r'\bq4h\b': 'six times daily',
+        r'\bQHS\b': 'once daily',
+        r'\bqhs\b': 'once daily',
         r'\bPRN\b': 'as needed',
         r'\bprn\b': 'as needed',
         r'\bSOS\b': 'as needed',
@@ -79,6 +105,24 @@ def fix_medical_abbreviations(text):
         text = re.sub(pattern, replacement, text)
     return text
 
+def is_non_tablet_prescription(raw_text):
+    import re
+    text = raw_text.lower()
+    patterns = [
+        r'\b10%\s*dextrose\b',
+        r'\bdextrose\b',
+        r'\biv\b',
+        r'\bintravenous\b',
+        r'\bfluid[s]?\b',
+        r'\bintake\b',
+        r'\bors\b',
+        r'\bsachet[s]?\b',
+        r'\bstat\b',
+        r'\bdrip\b',
+        r'\bbolus\b'
+    ]
+    return any(re.search(p, text) for p in patterns)
+
 def extract_medicines_with_ai(raw_text, groq_client):
     if not raw_text or len(raw_text.strip()) < 3:
         return None
@@ -88,10 +132,10 @@ Your ONLY job is to extract medicine data from prescription text.
 
 FREQUENCY RULES — follow STRICTLY:
 - "twice daily" or "BID" or "bd" = exactly 2 times per day
-- "three times daily" or "TID" or "tid" = exactly 3 times per day  
+- "three times daily" or "TID" or "tid" or "TDS" or "TOS" = exactly 3 times per day
 - "once daily" or "QD" or "od" or "OD" = exactly 1 time per day
-- "four times daily" or "QID" = exactly 4 times per day
-- "as needed" or "PRN" = as needed
+- "four times daily" or "QID" or "Q6H" = exactly 4 times per day
+- "as needed" or "PRN" or "SOS" = as needed
 
 NAME RULES:
 - Copy medicine names EXACTLY as they appear
