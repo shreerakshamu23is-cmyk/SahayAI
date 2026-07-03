@@ -5,6 +5,9 @@ from sqlalchemy.orm import Session as DBSession
 from groq import Groq
 from modules.ocr import extract_text_from_image, extract_medicines_with_ai, medicines_to_speech, is_non_tablet_prescription
 import os
+import re
+from urllib.parse import quote_plus
+from urllib.request import Request, urlopen
 
 from database import engine, SessionLocal, Base
 from modules.face_auth import User, Prescription, MedicalDocument
@@ -15,6 +18,224 @@ from modules.face_service import encode_face_from_bytes, encoding_to_bytes, comp
 load_dotenv()
 
 Base.metadata.create_all(bind=engine)
+
+
+def get_home_remedy_response(message: str, language: str = "english"):
+    text = message.lower()
+    lang = (language or "english").lower()
+
+    if any(keyword in text for keyword in ["headache", "head ache", "head pain", "sir dard", "sir pain"]):
+        if lang in {"hi", "hindi"}:
+            return (
+                "मild headache के लिए पानी पिएं, आराम करें और सिर पर ठंडा कपड़ा रखें। अगर दर्द बहुत तेज हो या लगातार रहे, तो डॉक्टर से मिलें। "
+                "होम रेमेडी देखें: https://www.youtube.com/results?search_query=home+remedies+for+headache"
+            )
+        if lang in {"kn", "kannada"}:
+            return (
+                "ಸಣ್ಣ ತಲೆನೋವಿಗೆ पानी ಕುಡಿಯಿರಿ, ವಿಶ್ರಾಂತಿ ತೆಗೆದುಕೊಳ್ಳಿ ಮತ್ತು ತಲೆಯ ಮೇಲೆ ತಣ್ಣನೆಯ ಬಟ್ಟೆ ಇಡಿರಿ। ನೋವು ಕಠಿಣವಾಗಿದ್ದರೆ ಅಥವಾ ಮುಂದುವರಿದರೆ ವೈದ್ಯರನ್ನು ಭೇಟಿ ಮಾಡಿ. "
+                "ಹೋಮ್ ರೇಮಿಡೀಸ್ ನೋಡೋಣ: https://www.youtube.com/results?search_query=home+remedies+for+headache"
+            )
+        if lang in {"ta", "tamil"}:
+            return (
+                "லேசான தலைவலிக்கு தண்ணீர் குடியுங்கள், ஓய்வெடுங்கள் மற்றும் தலையில் குளிர்ந்த துணியை வையுங்கள். வலி கடுமையாக இருந்தால் அல்லது தொடர்ந்தால் மருத்துவரை அணுகவும். "
+                "வீட்டு வைத்தியங்களை பார்க்கவும்: https://www.youtube.com/results?search_query=home+remedies+for+headache"
+            )
+        if lang in {"te", "telugu"}:
+            return (
+                "లేత తలనొప్పికి నీరు త్రాగండి, విశ్రాంతి తీసుకోండి మరియు తలపై చల్లని cloth పెట్టండి. నొప్పి తీవ్రంగా ఉంటే లేదా కొనసాగితే డాక్టర్ కలవండి. "
+                "హోమ్ రిమిడీస్ చూడండి: https://www.youtube.com/results?search_query=home+remedies+for+headache"
+            )
+        if lang in {"mr", "marathi"}:
+            return (
+                "लहान डोकेदुखीसाठी पाणी प्या, विश्रांती घ्या आणि डोक्यावर थंड कपडा ठेवा. वेदना तीव्र झाल्यास किंवा चालू राहिल्यास डॉक्टरांना भेटा. "
+                "हোম रेमेडीज पाहा: https://www.youtube.com/results?search_query=home+remedies+for+headache"
+            )
+        if lang in {"bn", "bengali"}:
+            return (
+                "হালকা মাথাব্যথার জন্য পানি পান করুন, বিশ্রাম নিন এবং forehead-এ ঠান্ডা কাপড় রাখুন। ব্যথা তীব্র হলে বা দীর্ঘস্থায়ী হলে চিকিৎসকের পরামর্শ নিন। "
+                "হোম রিমিডি দেখুন: https://www.youtube.com/results?search_query=home+remedies+for+headache"
+            )
+        if lang in {"gu", "gujarati"}:
+            return (
+                "હળવી માથા દુખીને માટે પાણી પીઓ, આરામ કરો અને માથા પર ઠંડું કપડું મૂકો. દુખો તીવ્ર હોય અથવા ચાલુ રહે તો ડૉક્ટરને બતાવો. "
+                "હોમ રેમિડીઝ જુઓ: https://www.youtube.com/results?search_query=home+remedies+for+headache"
+            )
+        if lang in {"pa", "punjabi"}:
+            return (
+                "ਹਲਕੇ ਸਿਰਦੌਰ ਲਈ ਪਾਣੀ ਪਿਓ, ਆਰਾਮ ਕਰੋ ਅਤੇ ਸਿਰ ਤੇ ਠੰਡਾ ਕੱਪੜਾ ਰੱਖੋ। ਦਰਦ ਬਹੁਤ ਤੇਜ਼ ਹੋਵੇ ਜਾਂ ਜਾਰੀ ਰਹੇ ਤਾਂ ਡਾਕਟਰ ਨੂੰ ਮਿਲੋ। "
+                "ਹੋਮ ਰੈਮਿਡੀਜ਼ ਵੇਖੋ: https://www.youtube.com/results?search_query=home+remedies+for+headache"
+            )
+        return (
+            "For a mild headache, try drinking water, resting, and placing a cool cloth on your forehead. If it is severe or keeps coming back, please consult a doctor. "
+            "You can check home remedies here: https://www.youtube.com/results?search_query=home+remedies+for+headache"
+        )
+
+    if any(keyword in text for keyword in ["back pain", "backpain", "backache", "lower back pain", "pain in back"]):
+        if lang in {"hi", "hindi"}:
+            return (
+                "कमर दर्द के लिए हल्का आराम करें, गर्म पानी की बोतल या गर्म कपड़ा लगाएं और धीरे-धीरे 이동 करें। अगर दर्द बहुत तेज हो या चलने में मुश्किल हो, तो डॉक्टर से मिलें। "
+                "होम रेमेडी देखें: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
+            )
+        if lang in {"kn", "kannada"}:
+            return (
+                "ಕಾಲಿನ/ಮೆದುಳಿನ ಬೆನ್ನಿನ ನೋವಿಗೆ ಹಗುರವಾದ ವಿಶ್ರಾಂತಿ ತೆಗೆದುಕೊಳ್ಳಿ, ಬೆನ್ನಿಗೆ उष್ಣ ಕಚ್ಚಾ ರ disparate?"
+            )
+        if lang in {"ta", "tamil"}:
+            return (
+                "முதுகுவலிக்கு லேசான ஓய்வு பெறுங்கள், சூடான நீர் பாட்டில் அல்லது சூடான துணியை வையுங்கள், மெதுவாக நகருங்கள். வலி கடுமையாக இருந்தால் மருத்துவரை அணுகவும். "
+                "வீட்டு வைத்தியங்களை பார்க்கவும்: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
+            )
+        if lang in {"te", "telugu"}:
+            return (
+                "వెనుక నొప్పికి हल्का విశ్రాంతి తీసుకోండి, వేడినీటి బాటిల్ లేదా వేడిగడ్డలను వుంచండి మరియు నెమ్మదిగా కదలండి. నొప్పి తీవ్రంగా ఉంటే డాక్టర్‌ను సంప్రదించండి. "
+                "హోమ్ రిమిడీస్ చూడండి: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
+            )
+        if lang in {"mr", "marathi"}:
+            return (
+                "मागील वरील/खालील दुख्यासाठी हलका आराम करा, गरम पाण्याची बाटली किंवा गरम कपडा लावा आणि हळू हळू हालचाल करा. वेदना तीव्र झाल्यास डॉक्टरांना भेटा. "
+                "हোম रेमेडीज पाहा: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
+            )
+        if lang in {"bn", "bengali"}:
+            return (
+                "পিঠে ব্যথার জন্য হালকা বিশ্রাম নিন, গরম পানি ভর্তি বোতল বা গরম কাপড় দিন এবং ধীরে ধীরে চলাফেরা করুন। ব্যথা তীব্র হলে চিকিৎসকের পরামর্শ নিন। "
+                "হোম রিমিডি দেখুন: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
+            )
+        if lang in {"gu", "gujarati"}:
+            return (
+                "પીઠનો દુખો માટે હળવા આરામ કરો, ગરમ પાણીની બોટલ અથવા ગરમ કપડા વાપરો અને હળવેથી આગળ-પાછળ હિલો. દુખો તીવ્ર હોય તો ડૉક્ટરને બતાવો. "
+                "હોમ રેમિડીઝ જુઓ: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
+            )
+        if lang in {"pa", "punjabi"}:
+            return (
+                "ਪਿੱਠ ਦਰਦ ਲਈ ਹਲਕਾ ਆਰਾਮ ਕਰੋ, ਗਰਮ ਪਾਣੀ ਦੀ ਬੋਟਲ ਜਾਂ ਗਰਮ ਕੱਪੜਾ ਲਗਾਓ ਅਤੇ ਹਲਕਾ-ਭਰਾ ਹਿਲੋ। ਦਰਦ ਬਹੁਤ ਤੇਜ਼ ਹੋਵੇ ਤਾਂ ਡਾਕਟਰ ਨੂੰ ਮਿਲੋ। "
+                "ਹੋਮ ਰੈਮਿਡੀਜ਼ ਵੇਖੋ: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
+            )
+        return (
+            "For back pain, try light rest, a warm water bottle or warm cloth on the area, and gentle movement. If it is severe or you cannot move well, please consult a doctor. "
+            "You can check home remedies here: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
+        )
+
+    return None
+
+
+def get_home_remedy_response_v2(message: str, language: str = "english"):
+    text = message.lower()
+    lang = (language or "english").lower()
+
+    if any(keyword in text for keyword in ["headache", "head ache", "head pain", "sir dard", "sir pain"]):
+        if lang in {"hi", "hindi"}:
+            return {
+                "reply": "मild headache के लिए पानी पिएं, आराम करें और सिर पर ठंडा कपड़ा रखें। अगर दर्द बहुत तेज हो या लगातार रहे, तो डॉक्टर से मिलें।",
+                "search_query": "home remedies for headache"
+            }
+        if lang in {"kn", "kannada"}:
+            return {
+                "reply": "ಸಣ್ಣ ತಲೆನೋವಿಗೆ পানি ಕುಡಿಯಿರಿ, ವಿಶ್ರಾಂತಿ ತೆಗೆದುಕೊಳ್ಳಿ ಮತ್ತು ತಲೆಯ ಮೇಲೆ ತಣ್ಣನೆಯ ಬಟ್ಟೆ ಇಡಿರಿ. ನೋವು ಕಠಿಣವಾಗಿದ್ದರೆ ಅಥವಾ ಮುಂದುವರಿದರೆ ವೈದ್ಯರನ್ನು ಭೇಟಿ ಮಾಡಿ.",
+                "search_query": "home remedies for headache"
+            }
+        if lang in {"ta", "tamil"}:
+            return {
+                "reply": "லேசான தலைவலிக்கு தண்ணீர் குடியுங்கள், ஓய்வெடுங்கள் மற்றும் தலையில் குளிர்ந்த துணியை வையுங்கள். வலி கடுமையாக இருந்தால் அல்லது தொடர்ந்தால் மருத்துவரை அணுகவும்.",
+                "search_query": "home remedies for headache"
+            }
+        if lang in {"te", "telugu"}:
+            return {
+                "reply": "లేత తలనొప్పికి నీరు త్రాగండి, విశ్రాంతి తీసుకోండి మరియు తలపై చల్లని బట్ట పెట్టండి. నొప్పి తీవ్రంగా ఉంటే లేదా కొనసాగితే డాక్టర్ కలవండి.",
+                "search_query": "home remedies for headache"
+            }
+        if lang in {"mr", "marathi"}:
+            return {
+                "reply": "लहान डोकेदुखीसाठी पाणी प्या, विश्रांती घ्या आणि डोक्यावर थंड कपडा ठेवा. वेदना तीव्र झाल्यास किंवा चालू राहिल्यास डॉक्टरांना भेटा.",
+                "search_query": "home remedies for headache"
+            }
+        if lang in {"bn", "bengali"}:
+            return {
+                "reply": "হালকা মাথাব্যথার জন্য পানি পান করুন, বিশ্রাম নিন এবং কপালে ঠান্ডা কাপড় রাখুন। ব্যথা তীব্র হলে ডাক্তারের পরামর্শ নিন.",
+                "search_query": "home remedies for headache"
+            }
+        if lang in {"gu", "gujarati"}:
+            return {
+                "reply": "હળવી માથા દુખીને માટે પાણી પીઓ, આરામ કરો અને માથા પર ઠંડું કપડું મૂકો. દુખો વધારેમાં વધે તો ડૉક્ટરને જુઓ.",
+                "search_query": "home remedies for headache"
+            }
+        if lang in {"pa", "punjabi"}:
+            return {
+                "reply": "ਹਲਕੇ ਸਿਰਦਰਦ ਲਈ ਪਾਣੀ ਪੀਓ, ਆਰਾਮ ਕਰੋ ਅਤੇ ਸਿਰ ਤੇ ਠੰਡਾ ਕੱਪੜਾ ਰੱਖੋ। ਦਰਦ ਵੱਧੇ ਤਾਂ ਡਾਕਟਰ ਨੂੰ ਮਿਲੋ.",
+                "search_query": "home remedies for headache"
+            }
+        return {
+            "reply": "For a mild headache, try drinking water, resting, and placing a cool cloth on your forehead. If it is severe or keeps coming back, please consult a doctor.",
+            "search_query": "home remedies for headache"
+        }
+
+    if any(keyword in text for keyword in ["back pain", "backpain", "backache", "lower back pain", "pain in back"]):
+        if lang in {"hi", "hindi"}:
+            return {
+                "reply": "कमर दर्द के लिए हल्का आराम करें, गर्म पानी की बोतल या गर्म कपड़ा लगाएं और धीरे-धीरे चलें। अगर दर्द बहुत तेज हो या चलने में मुश्किल हो, तो डॉक्टर से मिलें।",
+                "search_query": "home remedies for back pain"
+            }
+        if lang in {"kn", "kannada"}:
+            return {
+                "reply": "ಬೆನ್ನಿನ ನೋವಿಗೆ ಹಗುರವಾದ ವಿಶ್ರಾಂತಿ ತೆಗೆದುಕೊಳ್ಳಿ, ಬೆನ್ನಿಗೆ ಬಿಸಿ ನೀರಿನ ಬಾಟಲ್ ಅಥವಾ ಬಿಸಿಯಾದ ಬಟ್ಟೆ ಇಡಿ, ಮತ್ತು ನಿಧಾನವಾಗಿ ಚಲಿಸಿ. ನೋವು ತೀವ್ರವಾಗಿದ್ದರೆ ವೈದ್ಯರನ್ನು ಸಂಪರ್ಕಿಸಿ.",
+                "search_query": "home remedies for back pain"
+            }
+        if lang in {"ta", "tamil"}:
+            return {
+                "reply": "முதுகுவலிக்கு லேசான ஓய்வு பெறுங்கள், சூடான நீர் பாட்டில் அல்லது சூடான துணியை வையுங்கள், மெதுவாக நகருங்கள். வலி கடுமையாக இருந்தால் மருத்துவரை அணுகவும்.",
+                "search_query": "home remedies for back pain"
+            }
+        if lang in {"te", "telugu"}:
+            return {
+                "reply": "వెనుక నొప్పికి ఆరాధ్యమైన విశ్రాంతి తీసుకోండి, వేడినీటి బాటిల్ లేదా వేడిగడ్డ ఉంచండి మరియు నెమ్మదిగా కదలండి. నొప్పి తీవ్రంగా ఉంటే డాక్టర్‌ను సంప్రదించండి.",
+                "search_query": "home remedies for back pain"
+            }
+        if lang in {"mr", "marathi"}:
+            return {
+                "reply": "मागील दुख्यांसाठी हलका आराम करा, गरम पाण्याची बाटली किंवा गरम कपडा लावा आणि हळू हळू हालचाल करा. वेदना तीव्र झाल्यास डॉक्टरांना भेटा.",
+                "search_query": "home remedies for back pain"
+            }
+        if lang in {"bn", "bengali"}:
+            return {
+                "reply": "পিঠে ব্যথার জন্য হালকা বিশ্রাম নিন, গরম পানি ভর্তি বোতল বা গরম কাপড় দিন এবং ধীরে ধীরে চলাফেরা করুন। ব্যথা তীব্র হলে চিকিৎসকের পরামর্শ নিন.",
+                "search_query": "home remedies for back pain"
+            }
+        if lang in {"gu", "gujarati"}:
+            return {
+                "reply": "પીઠના દુઃખાવા માટે હળવો આરામ કરો, ગરમ પાણીની બોટલ અથવા ગરમ કપડા વાપરો અને ધીમેથી હલાવો. દુઃખાવો વધારે હોય તો ડૉક્ટરને બતાવો.",
+                "search_query": "home remedies for back pain"
+            }
+        if lang in {"pa", "punjabi"}:
+            return {
+                "reply": "ਪਿੱਠ ਦਰਦ ਲਈ ਹਲਕਾ ਆਰਾਮ ਕਰੋ, ਗਰਮ ਪਾਣੀ ਦੀ ਬੋਤਲ ਜਾਂ ਗਰਮ ਕੱਪੜਾ ਲਗਾਓ ਅਤੇ ਹੌਲੀ-ਹੌਲੀ ਹਿਲੋ। ਦਰਦ ਬਹੁਤ ਤੇਜ਼ ਹੋਵੇ ਤਾਂ ਡਾਕਟਰ ਨੂੰ ਮਿਲੋ.",
+                "search_query": "home remedies for back pain"
+            }
+        return {
+            "reply": "For back pain, try light rest, a warm water bottle or warm cloth on the area, and gentle movement. If it is severe or you cannot move well, please consult a doctor.",
+            "search_query": "home remedies for back pain"
+        }
+
+    return None
+
+
+def get_youtube_video_for_query(query: str):
+    search_url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
+    try:
+        request = Request(search_url, headers={"User-Agent": "Mozilla/5.0"})
+        html = urlopen(request, timeout=10).read().decode("utf-8", errors="ignore")
+        match = re.search(r'"videoId":"([^"]+)"', html)
+        if not match:
+            return {"search_url": search_url}
+
+        video_id = match.group(1)
+        return {
+            "title": query.title(),
+            "url": f"https://www.youtube.com/watch?v={video_id}",
+            "embed_url": f"https://www.youtube.com/embed/{video_id}",
+            "search_url": search_url,
+        }
+    except Exception:
+        return {"search_url": search_url}
+
 
 app = FastAPI()
 
@@ -123,7 +344,105 @@ async def voice_assistant(
     language: str,
     name: str
 ):
+    remedy_result = get_home_remedy_response_v2(message, language)
+    if remedy_result:
+        lang_search = {
+            "kannada": "ಕನ್ನಡ",
+            "hindi": "hindi",
+            "tamil": "tamil",
+            "telugu": "telugu",
+            "marathi": "marathi",
+            "bengali": "bengali",
+            "gujarati": "gujarati",
+            "punjabi": "punjabi",
+            "english": ""
+        }
+        lang_suffix = lang_search.get(language, "")
+        localized_query = f"{remedy_result['search_query']} {lang_suffix}".strip()
+        video_info = get_youtube_video_for_query(localized_query)
+        return {
+            "reply": remedy_result["reply"],
+            "navigate_to": None,
+            "videos": [video_info] if video_info else [],
+            "video_search_url": video_info.get("search_url")
+        }
+
     client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+
+    health_check_prompt = f"""The user said: "{message}"
+
+Is this message about a health problem, illness, pain, symptom, or medical condition?
+If YES, respond with JSON only:
+{{"is_health": true, "condition": "the health condition in English", "search_query": "home remedies for [condition]"}}
+
+If NO (general conversation, navigation request, greeting etc), respond with JSON only:
+{{"is_health": false}}
+
+Respond ONLY with JSON. No explanation."""
+
+    health_check = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": health_check_prompt}],
+        max_tokens=100,
+        temperature=0
+    )
+
+    import json as json_lib
+    try:
+        health_data_raw = health_check.choices[0].message.content.strip()
+        health_data_raw = health_data_raw.replace("```json","").replace("```","").strip()
+        health_data = json_lib.loads(health_data_raw)
+    except Exception:
+        health_data = {"is_health": False}
+
+    if health_data.get("is_health"):
+        condition = health_data.get("condition", "health issue")
+        search_query = health_data.get("search_query", f"home remedies for {condition}")
+
+        remedy_prompt = f"""The user {name} who speaks {language} said: "{message}"
+They seem to have: {condition}
+
+Give a helpful home remedy response in {language} language.
+Rules:
+1. Be warm and caring
+2. Give 2-3 simple home remedy suggestions
+3. Always end with: "If it gets worse, please see a doctor"
+4. Keep it SHORT — max 3 sentences
+5. Use simple words a non-literate rural person can understand
+6. Write in {language} language
+
+Reply now:"""
+
+        remedy_response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": remedy_prompt}],
+            max_tokens=200,
+            temperature=0.3
+        )
+
+        remedy_reply = remedy_response.choices[0].message.content.strip()
+        lang_search = {
+            "kannada": "ಕನ್ನಡ",
+            "hindi": "hindi",
+            "tamil": "tamil",
+            "telugu": "telugu",
+            "marathi": "marathi",
+            "bengali": "bengali",
+            "gujarati": "gujarati",
+            "punjabi": "punjabi",
+            "english": ""
+        }
+        lang_suffix = lang_search.get(language, "")
+        localized_query = f"{search_query} {lang_suffix}".strip()
+        video_info = get_youtube_video_for_query(localized_query)
+
+        return {
+            "reply": remedy_reply,
+            "navigate_to": None,
+            "videos": [video_info] if video_info else [],
+            "video_search_url": video_info.get("search_url") if video_info else None
+        }
+
     system_prompt = f"""You are SahayAI, a helpful health companion 
 for rural users in India. You are talking to {name} who speaks {language}.
 
@@ -146,7 +465,7 @@ IMPORTANT: "khana" means food, NOT medical records. Only navigate if medical int
 User said: {message}"""
 
     response = client.chat.completions.create(
-      model="llama-3.3-70b-versatile",
+        model="llama-3.3-70b-versatile",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": message}
@@ -172,7 +491,9 @@ User said: {message}"""
 
     return {
         "reply": reply,
-        "navigate_to": navigate_to
+        "navigate_to": navigate_to,
+        "videos": [],
+        "video_search_url": None
     }
 @app.post("/scan-prescription/{user_id}")
 async def scan_prescription(

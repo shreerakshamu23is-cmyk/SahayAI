@@ -155,7 +155,7 @@ function Prescription() {
   const name = location.state?.name || "User"
   const language = location.state?.language || "english"
   const userId = location.state?.userId
-  const t = appTranslations[language] || appTranslations["english"]
+  const t = { ...appTranslations["english"], ...appTranslations[language] }
 
   const [streaming, setStreaming] = useState(false)
   const [photo, setPhoto] = useState(null)
@@ -396,7 +396,7 @@ function Prescription() {
             {/* LEFT PANEL — Prescription Scanner */}
             <div className="panel">
               <div className="panel-header">
-                📋 Scan Prescription
+                📋 {t.scanPrescriptionPanel}
               </div>
               <div className="panel-body">
 
@@ -404,7 +404,7 @@ function Prescription() {
                   <>
                     <div className="camera-placeholder">
                       <div className="camera-placeholder-icon">📄</div>
-                      <div>Upload or take photo of prescription</div>
+                      <div>{t.uploadOrTakePhoto}</div>
                     </div>
                     <button className="btn" onClick={() => { unlockVoice(); startCamera() }}>
                       📷 {t.openCamera}
@@ -426,7 +426,7 @@ function Prescription() {
                       📸 {t.capturePhoto}
                     </button>
                     <button className="btn-outline" onClick={() => { stopCamera(); setMode("options") }}>
-                      Cancel
+                      {t.cancel}
                     </button>
                   </>
                 )}
@@ -454,7 +454,7 @@ function Prescription() {
             {/* RIGHT PANEL — Tablet Identifier */}
             <div className="panel">
               <div className="panel-header">
-                🔍 Identify Tablet
+                🔍 {t.identifyTabletPanel}
               </div>
               <div className="panel-body">
 
@@ -462,15 +462,15 @@ function Prescription() {
                   <>
                     <div className="camera-placeholder">
                       <div className="camera-placeholder-icon">💊</div>
-                      <div>Take photo of your tablet or medicine strip</div>
+                      <div>{t.takePhotoTablet}</div>
                     </div>
                     <button className="btn" onClick={() => {
                       setTabletMode("camera_tablet")
                     }}>
-                      📷 Take Tablet Photo
+                      📷 {t.takePhotoTablet}
                     </button>
                     <button className="btn-dashed" onClick={() => { tabletFileRef.current.click() }}>
-                      📁 Upload Tablet Photo
+                      📁 {t.uploadTabletPhoto}
                     </button>
                     <input ref={tabletFileRef} type="file" accept="image/*"
                       style={{ display: "none" }} onChange={handleTabletUpload} />
@@ -484,10 +484,10 @@ function Prescription() {
                       Camera for tablet identification — use Upload for now
                     </p>
                     <button className="btn-dashed" onClick={() => { tabletFileRef.current.click() }}>
-                      📁 Upload Tablet Photo
+                      📁 {t.uploadTabletPhoto}
                     </button>
                     <button className="btn-outline" onClick={() => setTabletMode("options")}>
-                      Cancel
+                      {t.cancel}
                     </button>
                     <input ref={tabletFileRef} type="file" accept="image/*"
                       style={{ display: "none" }} onChange={handleTabletUpload} />
@@ -500,10 +500,10 @@ function Prescription() {
                       <img src={tabletPhoto} alt="tablet" />
                     </div>
                     <button className="btn" onClick={identifyTablet} disabled={tabletLoading}>
-                      {tabletLoading ? "Identifying..." : "🔍 Identify this tablet"}
+                      {tabletLoading ? t.identifying : t.identifyThis}
                     </button>
                     <button className="btn-outline" onClick={retakeTablet}>
-                      🔄 Try another photo
+                      {t.tryAnotherPhoto}
                     </button>
                   </>
                 )}
@@ -523,7 +523,7 @@ function Prescription() {
                       style={{ marginTop: "10px" }}
                       onClick={() => speakHelper(`This is ${tabletResult.medicine}. ${tabletResult.description}`)}
                     >
-                      🔊 Read aloud
+                      {t.readAloudTablet}
                     </button>
                   </div>
                 )}
@@ -535,7 +535,7 @@ function Prescription() {
                     fontSize: ".78rem", color: "#0F6E56",
                     border: "1px solid #9FE1CB"
                   }}>
-                    💡 Upload a photo of your medicine strip or tablet and we'll tell you what it is and what it's used for
+                    {t.tabletTip}
                   </div>
                 )}
 

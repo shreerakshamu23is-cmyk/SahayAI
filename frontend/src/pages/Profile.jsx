@@ -112,7 +112,7 @@ function Profile() {
   const language = location.state?.language || "english"
   const userId = location.state?.userId
 
-  const t = appTranslations[language] || appTranslations["english"]
+  const t = { ...appTranslations["english"], ...appTranslations[language] }
 
   const [stats, setStats] = useState({
     prescriptions: 0,
@@ -199,7 +199,7 @@ function Profile() {
                 <span className="lang-badge">
                   🗣️ {langNames[language] || language}
                 </span>
-                <span className="verified-badge">✅ Face verified</span>
+                <span className="verified-badge">{t.faceVerified}</span>
               </div>
               <div className="hero-id">
                 {t.memberSince} {memberSince} · {t.userId} #{userId}
@@ -238,23 +238,23 @@ function Profile() {
             <div className="stat-card">
               <div className="stat-icon">🔒</div>
               <div className="stat-number" style={{ fontSize: "1rem", marginTop: "4px" }}>
-                Secured
+                {t.secured}
               </div>
-              <div className="stat-label">Blockchain</div>
+              <div className="stat-label">{t.blockchain}</div>
             </div>
           </div>
 
           {/* Health summary */}
           {!loading && stats.lastPrescription && (
             <div className="health-card">
-              <div className="health-title">🏥 Health summary</div>
+              <div className="health-title">{t.healthSummary}</div>
               <div className="health-row">
-                <span className="health-key">Last prescription</span>
+                <span className="health-key">{t.lastPrescription}</span>
                 <span className="health-val">{stats.lastPrescription}</span>
               </div>
               {stats.activeMedicines.length > 0 && (
                 <div className="health-row">
-                  <span className="health-key">Recent medicines</span>
+                  <span className="health-key">{t.recentMedicines}</span>
                   <span className="health-val">
                     {stats.activeMedicines.join(", ")}
                   </span>
@@ -267,7 +267,7 @@ function Profile() {
           <div className="info-card">
             <div className="info-title">👤 {t.profileTitle}</div>
             <div className="info-row">
-              <span className="info-key">Name</span>
+              <span className="info-key">{t.nameLabel}</span>
               <span className="info-val">{name}</span>
             </div>
             <div className="info-row">
@@ -279,12 +279,12 @@ function Profile() {
               <span className="info-val">#{userId}</span>
             </div>
             <div className="info-row">
-              <span className="info-key">Face login</span>
-              <span className="info-val green">✅ Enabled</span>
+              <span className="info-key">{t.faceLoginLabel}</span>
+              <span className="info-val green">{t.enabledLabel}</span>
             </div>
             <div className="info-row">
-              <span className="info-key">Blockchain records</span>
-              <span className="info-val green">🔒 Secured</span>
+              <span className="info-key">{t.blockchainLabel}</span>
+              <span className="info-val green">{t.securedLabel}</span>
             </div>
           </div>
 
@@ -293,20 +293,20 @@ function Profile() {
             <button
               className="action-btn"
               onClick={() => announceAndAct(
-                "Going to update your face",
+                t.goingToUpdateFace,
                 () => navigate("/register-face", { state: { userId, name } })
               )}
             >
-              📷 Update face
+              {t.updateFaceBtn}
             </button>
             <button
               className="action-btn"
               onClick={() => announceAndAct(
-                "Going to your medical records",
+                t.goingToRecords,
                 () => navigate("/records", { state: { userId, name, language } })
               )}
             >
-              📋 View records
+              {t.viewRecordsBtn}
             </button>
           </div>
 
@@ -314,16 +314,16 @@ function Profile() {
             <button
               className="action-btn"
               onClick={() => announceAndAct(
-                "Going to scan prescription",
+                t.goingToScan,
                 () => navigate("/prescription", { state: { userId, name, language } })
               )}
             >
-              💊 Scan prescription
+              {t.scanPrescriptionBtn}
             </button>
             <button
               className="action-btn danger"
               onClick={() => announceAndAct(
-                "Logging out",
+                t.loggingOut,
                 () => navigate("/login-face")
               )}
             >

@@ -1,6 +1,7 @@
 import { useState, useRef } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { unlockVoice, speakText } from "../voiceHelper"
+import appTranslations from "../translations"
 
 const styles = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -52,6 +53,25 @@ const styles = `
     color: #085041; min-height: 44px; display: none;
   }
   .reply-box.visible { display: block; }
+  .video-card {
+    background: white; border-radius: 16px;
+    padding: 1.2rem; border: 0.5px solid #e8e8e4;
+    margin-bottom: 1rem;
+  }
+  .video-title {
+    font-weight: 700; color: #1a1a1a;
+    margin-bottom: .8rem; font-size: .95rem;
+  }
+  .video-frame {
+    width: 100%; border-radius: 10px;
+    aspect-ratio: 16/9; border: none;
+  }
+  .video-link {
+    display: block; text-align: center;
+    margin-top: .8rem; color: #0F6E56;
+    font-size: .85rem; text-decoration: none;
+    font-weight: 600;
+  }
   .transcript-box {
     background: #f9f9f7; border-radius: 12px;
     padding: 8px 16px; margin-bottom: 1rem;
@@ -71,73 +91,6 @@ const styles = `
   .module-desc { font-size: .8rem; color: #888; margin-top: 4px; }
 `
 
-const translations = {
-  kannada: {
-    greeting: `ನಮಸ್ಕಾರ, {name}!`,
-    tapMic: "ಮೈಕ್ ಒತ್ತಿ ಮಾತನಾಡಿ",
-    listening: "ಕೇಳುತ್ತಿದ್ದೇನೆ... ಮಾತನಾಡಿ",
-    tapToSpeak: "ಮೈಕ್ ಒತ್ತಿ ಮಾತನಾಡಿ",
-    prescription: "ಔಷಧಿ ಚೀಟಿ",
-    prescriptionDesc: "ನಿಮ್ಮ ಔಷಧಿ ಓದಿ",
-    records: "ವೈದ್ಯಕೀಯ ದಾಖಲೆ",
-    recordsDesc: "ಆರೋಗ್ಯ ಇತಿಹಾಸ",
-    voice: "ಧ್ವನಿ ಸಹಾಯಕ",
-    voiceDesc: "SahayAI ಜೊತೆ ಮಾತನಾಡಿ",
-    profile: "ನನ್ನ ಪ್ರೊಫೈಲ್",
-    profileDesc: "ನಿಮ್ಮ ವಿವರಗಳು",
-    logout: "ನಿರ್ಗಮಿಸು",
-    namaste: `ನಮಸ್ಕಾರ, {name} 🙏`,
-  },
-  hindi: {
-    greeting: `नमस्ते, {name}!`,
-    tapMic: "माइक दबाएं और बोलें",
-    listening: "सुन रहा हूं... बोलिए",
-    tapToSpeak: "माइक दबाएं और बोलें",
-    prescription: "पर्चा",
-    prescriptionDesc: "अपनी दवाई पढ़ें",
-    records: "मेडिकल रिकॉर्ड",
-    recordsDesc: "स्वास्थ्य इतिहास",
-    voice: "आवाज सहायक",
-    voiceDesc: "SahayAI से बात करें",
-    profile: "मेरी प्रोफाइल",
-    profileDesc: "अपना विवरण देखें",
-    logout: "लॉगआउट",
-    namaste: `नमस्ते, {name} 🙏`,
-  },
-  tamil: {
-    greeting: `வணக்கம், {name}!`,
-    tapMic: "மைக்கை அழுத்தி பேசுங்கள்",
-    listening: "கேட்கிறேன்... பேசுங்கள்",
-    tapToSpeak: "மைக்கை அழுத்தி பேசுங்கள்",
-    prescription: "மருந்து சீட்டு",
-    prescriptionDesc: "உங்கள் மருந்தை படியுங்கள்",
-    records: "மருத்துவ பதிவுகள்",
-    recordsDesc: "உடல்நலன் வரலாறு",
-    voice: "குரல் உதவியாளர்",
-    voiceDesc: "SahayAI உடன் பேசுங்கள்",
-    profile: "என் சுயவிவரம்",
-    profileDesc: "உங்கள் விவரங்கள்",
-    logout: "வெளியேறு",
-    namaste: `வணக்கம், {name} 🙏`,
-  },
-  english: {
-    greeting: `Namaskara, {name}!`,
-    tapMic: "Tap the mic to speak",
-    listening: "Listening... speak now",
-    tapToSpeak: "Tap the mic to speak",
-    prescription: "Prescription",
-    prescriptionDesc: "Scan and read your medicine",
-    records: "Medical Records",
-    recordsDesc: "View your health history",
-    voice: "Voice Assistant",
-    voiceDesc: "Talk to SahayAI",
-    profile: "My Profile",
-    profileDesc: "View your details",
-    logout: "Logout",
-    namaste: `Namaste, {name} 🙏`,
-  }
-}
-
 function Dashboard() {
   const location = useLocation()
   const navigate = useNavigate()
@@ -147,23 +100,26 @@ function Dashboard() {
   const name = location.state?.name || "User"
   const language = location.state?.language || "english"
   const userId = location.state?.userId
-  const t = translations[language] || translations["english"]
+  const t = appTranslations[language] || appTranslations["english"]
 
   const [listening, setListening] = useState(false)
   const [transcript, setTranscript] = useState("")
   const [replyText, setReplyText] = useState("")
+  const [videoInfo, setVideoInfo] = useState(null)
   const [voiceStatus, setVoiceStatus] = useState("")
 
   const langCodes = {
     kannada: "kn-IN", hindi: "hi-IN",
     tamil: "ta-IN", telugu: "te-IN",
     marathi: "mr-IN", bengali: "bn-IN",
+    gujarati: "gu-IN", punjabi: "pa-IN",
     english: "en-US",
   }
 
   const handleCommand = async (command) => {
     setVoiceStatus("Thinking...")
     setReplyText("")
+    setVideoInfo(null)
 
     try {
       const response = await fetch(
@@ -171,9 +127,13 @@ function Dashboard() {
         { method: "POST" }
       )
       const data = await response.json()
-      setVoiceStatus("Heard: " + command)
+      setVoiceStatus(`${t.youSaid} ${command}`)
       setReplyText(data.reply)
       speakText(data.reply)
+
+      if (data.videos && data.videos.length > 0) {
+        setVideoInfo(data.videos[0])
+      }
 
       if (data.navigate_to) {
         setTimeout(() => {
@@ -187,10 +147,10 @@ function Dashboard() {
         }, 3500)
       }
     } catch {
-      setVoiceStatus("Connection error — is backend running?")
+      setVoiceStatus("Connection error")
       speakText("Sorry, I could not connect. Please try again.")
     }
-  }
+}
 
   const startListening = () => {
     if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
@@ -206,7 +166,7 @@ function Dashboard() {
 
     recognition.onstart = () => {
       setListening(true)
-      setVoiceStatus("Listening... speak now")
+      setVoiceStatus(t.listening)
       setTranscript("")
       setReplyText("")
     }
@@ -264,12 +224,44 @@ function Dashboard() {
           </div>
 
           <div className={`transcript-box ${transcript ? "visible" : ""}`}>
-            You said: "{transcript}"
+            {t.youSaid} "{transcript}"
           </div>
 
           <div className={`reply-box ${replyText ? "visible" : ""}`}>
             {replyText}
           </div>
+
+          {videoInfo && (
+            <div className="video-card">
+              <div className="video-title">
+                🎥 {language === "kannada" ? "ಮನೆ ಮದ್ದು ವೀಡಿಯೋ" :
+                  language === "hindi" ? "घरेलू उपाय वीडियो" :
+                  language === "tamil" ? "வீட்டு வைத்தியம் வீடியோ" :
+                  language === "telugu" ? "ఇంటి వైద్యం వీడియో" :
+                  "Home remedy video"}
+              </div>
+              {videoInfo.embed_url ? (
+                <iframe
+                  className="video-frame"
+                  src={videoInfo.embed_url}
+                  title="Home remedy"
+                  allowFullScreen
+                />
+              ) : null}
+              {videoInfo.search_url && (
+                <a
+                  className="video-link"
+                  href={videoInfo.search_url}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  🔍 {language === "kannada" ? "ಹೆಚ್ಚಿನ ವೀಡಿಯೋ ಹುಡುಕಿ" :
+                    language === "hindi" ? "और वीडियो खोजें" :
+                    "Search more videos on YouTube"}
+                </a>
+              )}
+            </div>
+          )}
 
           <div className="modules-grid">
             <div className="module-card"
@@ -288,8 +280,8 @@ function Dashboard() {
 
             <div className="module-card" onClick={() => { unlockVoice(); startListening() }}>
               <div className="module-icon">🎙️</div>
-              <div className="module-title">{t.voice}</div>
-              <div className="module-desc">{t.voiceDesc}</div>
+              <div className="module-title">{t.voiceAssistant}</div>
+              <div className="module-desc">{t.voiceAssistantDesc}</div>
             </div>
 
             <div className="module-card"
