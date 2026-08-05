@@ -620,35 +620,32 @@ Return JSON only: {"medicine": "name", "description": "what it is used for in si
     if ocr_text:
         prompt_text += f"\n\nOCR text: {ocr_text}"
 
-    response = client.chat.completions.create(
-        model="meta-llama/llama-4-scout-17b-16e-instruct",
-        messages=[{
-            "role": "user",
-            "content": [
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:image/jpeg;base64,{image_b64}"
-                    }
-                },
-                {
-                    "type": "text",
-                    "text": prompt_text
-                }
-            ]
-        }],
-        max_tokens=150,
-        temperature=0
-    )
-
     try:
+        if not ocr_text:
+            return {"error": "Could not read any tablet text from the image. Please try a clearer photo or enter the medicine name manually."}
+
+        response = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{
+                "role": "user",
+                "content": prompt_text
+            }],
+            max_tokens=150,
+            temperature=0
+        )
+
         import json
         result = response.choices[0].message.content.strip()
         result = result.replace("```json", "").replace("```", "").strip()
         return json.loads(result)
     except Exception as e:
-        print(f"Tablet identify parsing error: {e}")
-        return {"found": False, "medicine": "", "description": ""}
+        import traceback
+        print("Tablet identify error:", e)
+        traceback.print_exc()
+        return {
+            "error": f"Tablet identification failed on the server: {e}",
+            "debug": traceback.format_exc()
+        }
     return {"documents": [
         {
             "id": d.id,

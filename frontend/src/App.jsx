@@ -6,6 +6,7 @@ import Dashboard from "./pages/Dashboard"
 import Prescription from "./pages/Prescription"
 import Profile from "./pages/Profile"
 import Records from "./pages/Records"
+import Schemes from "./pages/Schemes"
 
 function App() {
   return (
@@ -18,6 +19,7 @@ function App() {
         <Route path="/prescription" element={<Prescription />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/records" element={<Records />} />
+        <Route path="/schemes" element={<Schemes />} />
       </Routes>
     </BrowserRouter>
   )

@@ -237,6 +237,11 @@ function Prescription() {
         `http://localhost:8000/scan-prescription/${userId}?language=${language}`,
         { method: "POST", body: formData }
       )
+      if (!response.ok) {
+        const errorText = await response.text()
+        setError(`Server error ${response.status}: ${errorText || response.statusText}`)
+        return
+      }
       const data = await response.json()
 
       if (data.error) {
@@ -246,7 +251,8 @@ function Prescription() {
         speakHelper(data.speech_text)
         fetchMedicineDescriptions(data.medicines)
       }
-    } catch {
+    } catch (err) {
+      console.error("scanPrescription error:", err)
       setError("Could not connect to server")
     } finally {
       setLoading(false)
@@ -285,15 +291,23 @@ function Prescription() {
         "http://localhost:8000/identify-tablet",
         { method: "POST", body: formData }
       )
+      if (!response.ok) {
+        const errorText = await response.text()
+        setTabletError(`Server error ${response.status}: ${errorText || response.statusText}`)
+        return
+      }
       const data = await response.json()
 
-      if (data.found) {
+      if (data.error) {
+        setTabletError(data.error)
+      } else if (data.found) {
         setTabletResult(data)
         speakHelper(`This appears to be ${data.medicine}. ${data.description}`)
       } else {
         setTabletError("Could not identify the tablet. Try a clearer photo showing the tablet name.")
       }
-    } catch {
+    } catch (err) {
+      console.error("identifyTablet error:", err)
       setTabletError("Could not connect to server")
     } finally {
       setTabletLoading(false)

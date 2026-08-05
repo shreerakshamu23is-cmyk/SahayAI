@@ -290,6 +290,27 @@ function Dashboard() {
               <div className="module-title">{t.profile}</div>
               <div className="module-desc">{t.profileDesc}</div>
             </div>
+
+            <div className="module-card"
+                onClick={() => navigate("/schemes", { state: { userId, name, language } })}>
+                <div className="module-icon">🏛️</div>
+                <div className="module-title">
+                  {language === "kannada" ? "ಸರ್ಕಾರಿ ಯೋಜನೆಗಳು" :
+                  language === "hindi" ? "सरकारी योजनाएं" :
+                  language === "tamil" ? "அரசு திட்டங்கள்" :
+                  language === "telugu" ? "ప్రభుత్వ పథకాలు" :
+                  language === "marathi" ? "सरकारी योजना" :
+                  language === "bengali" ? "সরকারি প্রকল্প" :
+                  language === "gujarati" ? "સરકારી યોજનાઓ" :
+                  language === "punjabi" ? "ਸਰਕਾਰੀ ਯੋਜਨਾਵਾਂ" :
+                  "Govt Schemes"}
+            </div>
+            <div className="module-desc">
+              {language === "kannada" ? "ನಿಮ್ಮ ಹಕ್ಕುಗಳನ್ನು ತಿಳಿಯಿರಿ" :
+              language === "hindi" ? "अपने अधिकार जानें" :
+              "Know your rights"}
+            </div>
+            </div>
           </div>
         </div>
       </div>
