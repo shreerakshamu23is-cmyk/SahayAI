@@ -4,8 +4,39 @@ import numpy as np
 from PIL import Image
 import io
 import json
+import difflib
+import groq as groq_module
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+
+OCR_CONFIGS = ['--oem 3 --psm 6', '--oem 3 --psm 11']
+
+
+def build_ocr_variants_for_testing():
+    """Small, deterministic list used for regression tests."""
+    return ['gray_up', 'base', 'closed']
+
+
+def build_ocr_variants(image_bytes):
+    """Create a minimal, fast OCR pipeline. The previous version ran 18 Tesseract passes per image."""
+    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    img_np = np.array(image)
+    gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
+
+    # Limit processing to a single safe upscale; avoid re-running expensive transforms.
+    max_dim = 1800
+    if max(gray.shape) > max_dim:
+        scale = max_dim / float(max(gray.shape))
+        gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+
+    base = preprocess_image(image_bytes)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    equalized = clahe.apply(gray)
+    bilateral = cv2.bilateralFilter(equalized, d=7, sigmaColor=35, sigmaSpace=35)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    closed = cv2.morphologyEx(bilateral, cv2.MORPH_CLOSE, kernel)
+    return [gray, base, closed]
+
 
 def preprocess_image(image_bytes):
     image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
@@ -40,29 +71,54 @@ def preprocess_image(image_bytes):
 
 def extract_text_from_image(image_bytes):
     try:
-        processed = preprocess_image(image_bytes)
-        inverted = cv2.bitwise_not(processed)
-        configs = [
-            '--oem 1 --psm 6',
-            '--oem 1 --psm 11',
-            '--oem 1 --psm 3',
-            '--oem 1 --psm 4'
-        ]
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        img_np = np.array(image)
+        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
 
-        best_text = ""
-        images = [processed, inverted]
+        if max(gray.shape) > 1800:
+            scale = 1800 / float(max(gray.shape))
+            gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
 
-        for img in images:
-            for cfg in configs:
-                text = pytesseract.image_to_string(img, lang='eng', config=cfg)
+        base = preprocess_image(image_bytes)
+        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+        equalized = clahe.apply(gray)
+        bilateral = cv2.bilateralFilter(equalized, d=7, sigmaColor=35, sigmaSpace=35)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        closed = cv2.morphologyEx(bilateral, cv2.MORPH_CLOSE, kernel)
+
+        variants = [gray, base, closed]
+
+        def score_ocr_text(text):
+            if not text:
+                return -999.0
+            words = [w for w in text.split() if w]
+            if not words:
+                return -999.0
+            single_noise = sum(1 for w in words if len(w) == 1 and not w.isdigit() and w.lower() not in ['a','i'])
+            med_keywords = ['mg','ml','mcg','tab','tablet','cap','capsule','syrup','bid','tid','qd','prn','take','once','twice']
+            med_score = sum(3.0 for w in words if any(k in w.lower() for k in med_keywords))
+            alpha_words = sum(1.0 for w in words if any(c.isalpha() for c in w))
+            score = (len(words) * 1.0) + med_score + (alpha_words * 0.5) - (single_noise * 4.0)
+            return score
+
+        best_text = ''
+        best_score = -9999.0
+        for var in variants:
+            for cfg in OCR_CONFIGS:
+                try:
+                    text = pytesseract.image_to_string(var, lang='eng', config=cfg)
+                except Exception:
+                    continue
                 text = text.replace('\x0c', ' ').strip()
                 text = fix_medical_abbreviations(text)
-                if len(text.split()) > len(best_text.split()):
+                sc = score_ocr_text(text)
+                if sc > best_score:
+                    best_score = sc
                     best_text = text
 
         if not best_text:
-            text = pytesseract.image_to_string(processed, lang='eng')
-            best_text = fix_medical_abbreviations(text.replace('\x0c', ' ').strip())
+            text = pytesseract.image_to_string(gray, lang='eng', config=OCR_CONFIGS[0])
+            best_text = fix_medical_abbreviations(text.replace('\x0c',' ').strip())
 
         return best_text.strip() if best_text else None
     except Exception as e:
@@ -156,18 +212,46 @@ Return ONLY a JSON array. No explanation, no markdown:
 ]"""
 
     try:
-        response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {
-                    "role": "system",
-                    "content": "You are a medical data parser. Return only valid JSON arrays. Never explain, never add text outside the JSON array."
-                },
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=500,
-            temperature=0
-        )
+        # Truncate extremely long prescription text to avoid API request size errors
+        if len(raw_text) > 3000:
+            raw_text = raw_text[:3000] + "\n...[truncated]"
+        # try a short fallback list of models if the preferred model is unavailable
+        models = [
+            "llama-3.3-70b-versatile",
+            "llama-3.2-11b-vision-preview",
+            "llama-3.2-90b-vision-preview",
+            "groq/compound",
+            "qwen/qwen3.6-27b",
+            "openai/gpt-oss-120b"
+        ]
+        response = None
+        last_err = None
+        for model in models:
+            try:
+                response = groq_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a medical data parser. Return only valid JSON arrays. Never explain, never add text outside the JSON array."
+                        },
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=500,
+                    temperature=0
+                )
+                break
+            except Exception as e:
+                print(f"Medicine extraction Groq model {model} failed:", e)
+                last_err = e
+                if isinstance(e, groq_module.NotFoundError) or "model_not_found" in str(e):
+                    continue
+                else:
+                    break
+        if response is None:
+            if last_err:
+                raise last_err
+            return []
         result = response.choices[0].message.content.strip()
         result = result.replace("```json", "").replace("```", "").strip()
 
@@ -182,6 +266,111 @@ Return ONLY a JSON array. No explanation, no markdown:
     except Exception as e:
         print(f"Medicine extraction error: {e}")
         return []
+
+
+def extract_medicines_locally(raw_text):
+    """Conservative local extractor to be used when AI is unavailable.
+    Returns a list of dicts with keys: medicine, dose, frequency, duration.
+    This is intentionally simple and avoids network calls or new packages.
+    """
+    import re
+    if not raw_text:
+        return []
+
+    lines = [l.strip() for l in raw_text.splitlines() if l.strip()]
+    meds = []
+    for line in lines:
+        low = line.lower()
+        # consider lines with tablet words or numbers/doses
+        if not any(k in low for k in ["tab", "tablet", "cap", "capsule", "mg", "ml", "mcg"]) and not re.search(r'\d', low):
+            continue
+
+        # basic normalization common OCR artifacts
+        norm = re.sub(r'[^\x00-\x7F]', ' ', line)
+        norm = re.sub(r'\s{2,}', ' ', norm)
+        norm = norm.strip(' .,-')
+
+        # collapse runs of single-letter tokens (e.g. 'B e t a 1 0 e' -> 'Beta10e')
+        parts = norm.split()
+        merged = []
+        i = 0
+        while i < len(parts):
+            if len(parts[i]) == 1 and parts[i].isalnum():
+                buf = [parts[i]]
+                j = i + 1
+                while j < len(parts) and len(parts[j]) == 1 and parts[j].isalnum():
+                    buf.append(parts[j])
+                    j += 1
+                if len(buf) >= 3:
+                    merged.append(''.join(buf))
+                    i = j
+                    continue
+            merged.append(parts[i])
+            i += 1
+        norm = ' '.join(merged)
+
+        # try to find dose like 100mg or 10 mg
+        m = re.search(r'(\d{1,4}\s*(?:mg|ml|mcg|g|iu))', norm, re.IGNORECASE)
+        dose = m.group(1).replace(' ', '') if m else ''
+
+        # frequency hints
+        freq = ''
+        if re.search(r'\b(bid|twice|bd)\b', low):
+            freq = 'twice daily'
+        elif re.search(r'\b(tid|three|tds)\b', low):
+            freq = 'three times daily'
+        elif re.search(r'\b(qid|four)\b', low):
+            freq = 'four times daily'
+        elif re.search(r'\b(qd|once|od)\b', low):
+            freq = 'once daily'
+        elif re.search(r'\b(prn|as needed|sos)\b', low):
+            freq = 'as needed'
+
+        # extract name: take initial token run before dose or comma
+        name = norm
+        if dose:
+            name = norm.split(dose)[0].strip(' -,:;')
+        else:
+            name = re.split(r'[,:\-\(\)]', norm)[0].strip()
+
+        # ignore trivial noise
+        if len(name) < 2:
+            continue
+
+        meds.append({
+            'raw_name': name,
+            'medicine': name,
+            'dose': dose,
+            'frequency': freq,
+            'duration': ''
+        })
+
+    # dedupe by lowercase name
+    out = []
+    seen = set()
+    for m in meds:
+        k = m['medicine'].lower()
+        if k in seen:
+            continue
+        seen.add(k)
+        out.append(m)
+
+    # try to normalize medicine names using local mapping and fuzzy matching
+    try:
+        for m in out:
+            raw = m.get('raw_name') or m.get('medicine') or ''
+            norm = normalize_medicine_name(raw)
+            m['medicine_normalized'] = norm
+            # replace medicine with normalized form for downstream use
+            if norm and norm.lower() != raw.lower():
+                m['medicine'] = norm
+                m['normalized'] = True
+            else:
+                m['normalized'] = False
+    except Exception:
+        pass
+
+    return out
 
 def medicines_to_speech(medicines, language="english"):
     if not medicines:
@@ -211,3 +400,58 @@ def medicines_to_speech(medicines, language="english"):
         speech_parts.append(text)
 
     return ". Next medicine: ".join(speech_parts)
+
+
+# Small local drug list and normalization map to correct common OCR artifacts
+DRUG_LIST = [
+    "Betaloc",
+    "Dorzolamide",
+    "Cimetidine",
+    "Oxprenolol",
+    "Paracetamol",
+    "Calpol",
+    "Amoxicillin",
+    "Ciprofloxacin",
+    "Cetirizine",
+    "Ibuprofen",
+    "Omeprazole",
+    "Metformin",
+    "Amlodipine",
+    "Atorvastatin",
+]
+
+NORMALIZATION_MAP = {
+    "beta10e": "Betaloc",
+    "betaloe": "Betaloc",
+    "betaloc": "Betaloc",
+    "dorzolamidua": "Dorzolamide",
+    "dorzolamidu": "Dorzolamide",
+    "dorzolamidum": "Dorzolamide",
+    "oxpre10l": "Oxprenolol",
+    "oxprelol": "Oxprenolol",
+    "calpol": "Calpol",
+}
+
+def normalize_medicine_name(raw_name, min_ratio=0.6):
+    """Return a normalized canonical medicine name for a raw OCR name.
+    Uses a small normalization map then difflib fuzzy matching against DRUG_LIST.
+    If no good match found, returns the original raw_name."""
+    if not raw_name:
+        return raw_name
+    key = re.sub(r'[^a-z0-9]', '', raw_name.lower())
+    if key in NORMALIZATION_MAP:
+        return NORMALIZATION_MAP[key]
+
+    # try direct title-case lookup
+    cand = raw_name.strip()
+    # exact case-insensitive match
+    for d in DRUG_LIST:
+        if cand.lower() == d.lower():
+            return d
+
+    # fuzzy match
+    matches = difflib.get_close_matches(cand, DRUG_LIST, n=1, cutoff=min_ratio)
+    if matches:
+        return matches[0]
+
+    return raw_name

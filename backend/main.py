@@ -3,9 +3,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session as DBSession
 from groq import Groq
-from modules.ocr import extract_text_from_image, extract_medicines_with_ai, medicines_to_speech, is_non_tablet_prescription
+import groq as groq_module
+from modules.ocr import (
+    extract_text_from_image,
+    extract_medicines_with_ai,
+    extract_medicines_locally,
+    medicines_to_speech,
+    is_non_tablet_prescription,
+    normalize_medicine_name,
+)
 import os
+from PIL import Image
+import io as _io
+import traceback
 import re
+import time
 from urllib.parse import quote_plus
 from urllib.request import Request, urlopen
 
@@ -18,6 +30,100 @@ from modules.face_service import encode_face_from_bytes, encoding_to_bytes, comp
 load_dotenv()
 
 Base.metadata.create_all(bind=engine)
+
+# If Groq model access fails (model_not_found), set this to avoid repeated errors
+GROQ_DISABLED = False
+# timestamp (epoch) until which Groq is considered disabled; 0 = not disabled
+GROQ_DISABLED_UNTIL = 0
+# cooldown in seconds after an authentication/model failure before retrying Groq
+GROQ_COOLDOWN_SECONDS = int(os.getenv("GROQ_COOLDOWN_SECONDS", "300"))
+
+def disable_groq(err=None):
+    global GROQ_DISABLED, GROQ_DISABLED_UNTIL
+    GROQ_DISABLED = True
+    GROQ_DISABLED_UNTIL = time.time() + GROQ_COOLDOWN_SECONDS
+    print("Groq disabled until", GROQ_DISABLED_UNTIL, "due to error:", err)
+
+def try_reenable_groq():
+    global GROQ_DISABLED, GROQ_DISABLED_UNTIL
+    if GROQ_DISABLED and time.time() >= GROQ_DISABLED_UNTIL:
+        GROQ_DISABLED = False
+        GROQ_DISABLED_UNTIL = 0
+        print("Groq re-enabled after cooldown")
+
+# Default Groq model fallback list. The order is preferred.
+GROQ_MODEL_FALLBACKS = [
+    "llama-3.3-70b-versatile",
+    "llama-3.2-11b-vision-preview",
+    "llama-3.2-90b-vision-preview",
+    "groq/compound",
+    "qwen/qwen3.6-27b",
+    "openai/gpt-oss-120b"
+]
+
+def call_groq_chat_with_fallback(client, messages, max_tokens=150, temperature=0, models=None):
+    # allow overriding via env var GROQ_MODELS (comma separated)
+    env_models = os.getenv("GROQ_MODELS")
+    if env_models:
+        try:
+            env_list = [m.strip() for m in env_models.split(",") if m.strip()]
+        except Exception:
+            env_list = None
+    else:
+        env_list = None
+
+    models = models or env_list or GROQ_MODEL_FALLBACKS
+    last_err = None
+    for model in models:
+        try:
+            resp = client.chat.completions.create(
+                model=model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+            return resp
+        except Exception as e:
+            # log and decide whether to try next model
+            print(f"Groq call failed for model {model}:", e)
+            last_err = e
+            msg = str(e).lower()
+            # recoverable model issues: try next model
+            if "model_not_found" in msg or "model_decommissioned" in msg or isinstance(e, groq_module.NotFoundError):
+                continue
+            # payload too large for this model — try next model instead of failing
+            if "request entity too large" in msg or "request_too_large" in msg or "413" in msg:
+                print("Groq model rejected request as too large, trying next model if available")
+                continue
+            # authentication / permission problems — disable Groq permanently
+            if any(k in msg for k in ["unauthorized", "invalid", "api key", "permission", "forbidden", "401", "403"]):
+                disable_groq(e)
+                raise
+            # rate limits or transient errors — raise to let caller decide (do not disable)
+            raise
+    # exhausted model list without success; if last_err indicates auth problems, disable Groq
+    if last_err:
+        lmsg = str(last_err).lower()
+        if any(k in lmsg for k in ["unauthorized", "invalid", "api key", "permission", "forbidden", "401", "403"]):
+            disable_groq(last_err)
+    # propagate last error to caller
+    raise last_err if last_err is not None else RuntimeError("Groq: no models configured")
+
+
+def get_groq_client():
+    """Return a Groq client if available and not disabled by cooldown; otherwise None."""
+    try_reenable_groq()
+    groq_key = os.getenv("GROQ_API_KEY")
+    if GROQ_DISABLED or not groq_key:
+        return None
+    try:
+        return Groq(api_key=groq_key)
+    except Exception as e:
+        print("Failed to create Groq client:", e)
+        msg = str(e).lower()
+        if isinstance(e, groq_module.NotFoundError) or "model_not_found" in msg or "model_decommissioned" in msg:
+            disable_groq(e)
+        return None
 
 
 def get_home_remedy_response(message: str, language: str = "english"):
@@ -35,36 +141,6 @@ def get_home_remedy_response(message: str, language: str = "english"):
                 "ಸಣ್ಣ ತಲೆನೋವಿಗೆ पानी ಕುಡಿಯಿರಿ, ವಿಶ್ರಾಂತಿ ತೆಗೆದುಕೊಳ್ಳಿ ಮತ್ತು ತಲೆಯ ಮೇಲೆ ತಣ್ಣನೆಯ ಬಟ್ಟೆ ಇಡಿರಿ। ನೋವು ಕಠಿಣವಾಗಿದ್ದರೆ ಅಥವಾ ಮುಂದುವರಿದರೆ ವೈದ್ಯರನ್ನು ಭೇಟಿ ಮಾಡಿ. "
                 "ಹೋಮ್ ರೇಮಿಡೀಸ್ ನೋಡೋಣ: https://www.youtube.com/results?search_query=home+remedies+for+headache"
             )
-        if lang in {"ta", "tamil"}:
-            return (
-                "லேசான தலைவலிக்கு தண்ணீர் குடியுங்கள், ஓய்வெடுங்கள் மற்றும் தலையில் குளிர்ந்த துணியை வையுங்கள். வலி கடுமையாக இருந்தால் அல்லது தொடர்ந்தால் மருத்துவரை அணுகவும். "
-                "வீட்டு வைத்தியங்களை பார்க்கவும்: https://www.youtube.com/results?search_query=home+remedies+for+headache"
-            )
-        if lang in {"te", "telugu"}:
-            return (
-                "లేత తలనొప్పికి నీరు త్రాగండి, విశ్రాంతి తీసుకోండి మరియు తలపై చల్లని cloth పెట్టండి. నొప్పి తీవ్రంగా ఉంటే లేదా కొనసాగితే డాక్టర్ కలవండి. "
-                "హోమ్ రిమిడీస్ చూడండి: https://www.youtube.com/results?search_query=home+remedies+for+headache"
-            )
-        if lang in {"mr", "marathi"}:
-            return (
-                "लहान डोकेदुखीसाठी पाणी प्या, विश्रांती घ्या आणि डोक्यावर थंड कपडा ठेवा. वेदना तीव्र झाल्यास किंवा चालू राहिल्यास डॉक्टरांना भेटा. "
-                "हোম रेमेडीज पाहा: https://www.youtube.com/results?search_query=home+remedies+for+headache"
-            )
-        if lang in {"bn", "bengali"}:
-            return (
-                "হালকা মাথাব্যথার জন্য পানি পান করুন, বিশ্রাম নিন এবং forehead-এ ঠান্ডা কাপড় রাখুন। ব্যথা তীব্র হলে বা দীর্ঘস্থায়ী হলে চিকিৎসকের পরামর্শ নিন। "
-                "হোম রিমিডি দেখুন: https://www.youtube.com/results?search_query=home+remedies+for+headache"
-            )
-        if lang in {"gu", "gujarati"}:
-            return (
-                "હળવી માથા દુખીને માટે પાણી પીઓ, આરામ કરો અને માથા પર ઠંડું કપડું મૂકો. દુખો તીવ્ર હોય અથવા ચાલુ રહે તો ડૉક્ટરને બતાવો. "
-                "હોમ રેમિડીઝ જુઓ: https://www.youtube.com/results?search_query=home+remedies+for+headache"
-            )
-        if lang in {"pa", "punjabi"}:
-            return (
-                "ਹਲਕੇ ਸਿਰਦੌਰ ਲਈ ਪਾਣੀ ਪਿਓ, ਆਰਾਮ ਕਰੋ ਅਤੇ ਸਿਰ ਤੇ ਠੰਡਾ ਕੱਪੜਾ ਰੱਖੋ। ਦਰਦ ਬਹੁਤ ਤੇਜ਼ ਹੋਵੇ ਜਾਂ ਜਾਰੀ ਰਹੇ ਤਾਂ ਡਾਕਟਰ ਨੂੰ ਮਿਲੋ। "
-                "ਹੋਮ ਰੈਮਿਡੀਜ਼ ਵੇਖੋ: https://www.youtube.com/results?search_query=home+remedies+for+headache"
-            )
         return (
             "For a mild headache, try drinking water, resting, and placing a cool cloth on your forehead. If it is severe or keeps coming back, please consult a doctor. "
             "You can check home remedies here: https://www.youtube.com/results?search_query=home+remedies+for+headache"
@@ -73,42 +149,13 @@ def get_home_remedy_response(message: str, language: str = "english"):
     if any(keyword in text for keyword in ["back pain", "backpain", "backache", "lower back pain", "pain in back"]):
         if lang in {"hi", "hindi"}:
             return (
-                "कमर दर्द के लिए हल्का आराम करें, गर्म पानी की बोतल या गर्म कपड़ा लगाएं और धीरे-धीरे 이동 करें। अगर दर्द बहुत तेज हो या चलने में मुश्किल हो, तो डॉक्टर से मिलें। "
+                "कमर दर्द के लिए हल्का आराम करें, गर्म पानी की बोतल या गर्म कपड़ा लगाएं और धीरे-धीरे चलें। अगर दर्द बहुत तेज हो या चलने में मुश्किल हो, तो डॉक्टर से मिलें। "
                 "होम रेमेडी देखें: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
             )
         if lang in {"kn", "kannada"}:
             return (
-                "ಕಾಲಿನ/ಮೆದುಳಿನ ಬೆನ್ನಿನ ನೋವಿಗೆ ಹಗುರವಾದ ವಿಶ್ರಾಂತಿ ತೆಗೆದುಕೊಳ್ಳಿ, ಬೆನ್ನಿಗೆ उष್ಣ ಕಚ್ಚಾ ರ disparate?"
-            )
-        if lang in {"ta", "tamil"}:
-            return (
-                "முதுகுவலிக்கு லேசான ஓய்வு பெறுங்கள், சூடான நீர் பாட்டில் அல்லது சூடான துணியை வையுங்கள், மெதுவாக நகருங்கள். வலி கடுமையாக இருந்தால் மருத்துவரை அணுகவும். "
-                "வீட்டு வைத்தியங்களை பார்க்கவும்: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
-            )
-        if lang in {"te", "telugu"}:
-            return (
-                "వెనుక నొప్పికి हल्का విశ్రాంతి తీసుకోండి, వేడినీటి బాటిల్ లేదా వేడిగడ్డలను వుంచండి మరియు నెమ్మదిగా కదలండి. నొప్పి తీవ్రంగా ఉంటే డాక్టర్‌ను సంప్రదించండి. "
-                "హోమ్ రిమిడీస్ చూడండి: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
-            )
-        if lang in {"mr", "marathi"}:
-            return (
-                "मागील वरील/खालील दुख्यासाठी हलका आराम करा, गरम पाण्याची बाटली किंवा गरम कपडा लावा आणि हळू हळू हालचाल करा. वेदना तीव्र झाल्यास डॉक्टरांना भेटा. "
-                "हোম रेमेडीज पाहा: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
-            )
-        if lang in {"bn", "bengali"}:
-            return (
-                "পিঠে ব্যথার জন্য হালকা বিশ্রাম নিন, গরম পানি ভর্তি বোতল বা গরম কাপড় দিন এবং ধীরে ধীরে চলাফেরা করুন। ব্যথা তীব্র হলে চিকিৎসকের পরামর্শ নিন। "
-                "হোম রিমিডি দেখুন: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
-            )
-        if lang in {"gu", "gujarati"}:
-            return (
-                "પીઠનો દુખો માટે હળવા આરામ કરો, ગરમ પાણીની બોટલ અથવા ગરમ કપડા વાપરો અને હળવેથી આગળ-પાછળ હિલો. દુખો તીવ્ર હોય તો ડૉક્ટરને બતાવો. "
-                "હોમ રેમિડીઝ જુઓ: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
-            )
-        if lang in {"pa", "punjabi"}:
-            return (
-                "ਪਿੱਠ ਦਰਦ ਲਈ ਹਲਕਾ ਆਰਾਮ ਕਰੋ, ਗਰਮ ਪਾਣੀ ਦੀ ਬੋਟਲ ਜਾਂ ਗਰਮ ਕੱਪੜਾ ਲਗਾਓ ਅਤੇ ਹਲਕਾ-ਭਰਾ ਹਿਲੋ। ਦਰਦ ਬਹੁਤ ਤੇਜ਼ ਹੋਵੇ ਤਾਂ ਡਾਕਟਰ ਨੂੰ ਮਿਲੋ। "
-                "ਹੋਮ ਰੈਮਿਡੀਜ਼ ਵੇਖੋ: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
+                "ಬೆನ್ನಿನ ನೋವಿಗೆ ಹಗುರವಾದ ವಿಶ್ರಾಂತಿ ತೆಗೆದುಕೊಳ್ಳಿ, ಬೆನ್ನಿಗೆ ಬಿಸಿ ನೀರಿನ ಬಾಟಲ್ ಅಥವಾ ಬಿಸಿಯಾದ ಬಟ್ಟೆ ಇಡಿ, ಮತ್ತು ನಿಧಾನವಾಗಿ ಚಲಿಸಿ. ನೋವು ತೀವ್ರವಾಗಿದ್ದರೆ ವೈದ್ಯರನ್ನು ಸಂಪರ್ಕಿಸಿ. "
+                "ಹೋಮ್ ರೇಮಿಡೀಸ್ ನೋಡೋಣ: https://www.youtube.com/results?search_query=home+remedies+for+back+pain"
             )
         return (
             "For back pain, try light rest, a warm water bottle or warm cloth on the area, and gentle movement. If it is severe or you cannot move well, please consult a doctor. "
@@ -133,36 +180,6 @@ def get_home_remedy_response_v2(message: str, language: str = "english"):
                 "reply": "ಸಣ್ಣ ತಲೆನೋವಿಗೆ পানি ಕುಡಿಯಿರಿ, ವಿಶ್ರಾಂತಿ ತೆಗೆದುಕೊಳ್ಳಿ ಮತ್ತು ತಲೆಯ ಮೇಲೆ ತಣ್ಣನೆಯ ಬಟ್ಟೆ ಇಡಿರಿ. ನೋವು ಕಠಿಣವಾಗಿದ್ದರೆ ಅಥವಾ ಮುಂದುವರಿದರೆ ವೈದ್ಯರನ್ನು ಭೇಟಿ ಮಾಡಿ.",
                 "search_query": "home remedies for headache"
             }
-        if lang in {"ta", "tamil"}:
-            return {
-                "reply": "லேசான தலைவலிக்கு தண்ணீர் குடியுங்கள், ஓய்வெடுங்கள் மற்றும் தலையில் குளிர்ந்த துணியை வையுங்கள். வலி கடுமையாக இருந்தால் அல்லது தொடர்ந்தால் மருத்துவரை அணுகவும்.",
-                "search_query": "home remedies for headache"
-            }
-        if lang in {"te", "telugu"}:
-            return {
-                "reply": "లేత తలనొప్పికి నీరు త్రాగండి, విశ్రాంతి తీసుకోండి మరియు తలపై చల్లని బట్ట పెట్టండి. నొప్పి తీవ్రంగా ఉంటే లేదా కొనసాగితే డాక్టర్ కలవండి.",
-                "search_query": "home remedies for headache"
-            }
-        if lang in {"mr", "marathi"}:
-            return {
-                "reply": "लहान डोकेदुखीसाठी पाणी प्या, विश्रांती घ्या आणि डोक्यावर थंड कपडा ठेवा. वेदना तीव्र झाल्यास किंवा चालू राहिल्यास डॉक्टरांना भेटा.",
-                "search_query": "home remedies for headache"
-            }
-        if lang in {"bn", "bengali"}:
-            return {
-                "reply": "হালকা মাথাব্যথার জন্য পানি পান করুন, বিশ্রাম নিন এবং কপালে ঠান্ডা কাপড় রাখুন। ব্যথা তীব্র হলে ডাক্তারের পরামর্শ নিন.",
-                "search_query": "home remedies for headache"
-            }
-        if lang in {"gu", "gujarati"}:
-            return {
-                "reply": "હળવી માથા દુખીને માટે પાણી પીઓ, આરામ કરો અને માથા પર ઠંડું કપડું મૂકો. દુખો વધારેમાં વધે તો ડૉક્ટરને જુઓ.",
-                "search_query": "home remedies for headache"
-            }
-        if lang in {"pa", "punjabi"}:
-            return {
-                "reply": "ਹਲਕੇ ਸਿਰਦਰਦ ਲਈ ਪਾਣੀ ਪੀਓ, ਆਰਾਮ ਕਰੋ ਅਤੇ ਸਿਰ ਤੇ ਠੰਡਾ ਕੱਪੜਾ ਰੱਖੋ। ਦਰਦ ਵੱਧੇ ਤਾਂ ਡਾਕਟਰ ਨੂੰ ਮਿਲੋ.",
-                "search_query": "home remedies for headache"
-            }
         return {
             "reply": "For a mild headache, try drinking water, resting, and placing a cool cloth on your forehead. If it is severe or keeps coming back, please consult a doctor.",
             "search_query": "home remedies for headache"
@@ -176,37 +193,7 @@ def get_home_remedy_response_v2(message: str, language: str = "english"):
             }
         if lang in {"kn", "kannada"}:
             return {
-                "reply": "ಬೆನ್ನಿನ ನೋವಿಗೆ ಹಗುರವಾದ ವಿಶ್ರಾಂತಿ ತೆಗೆದುಕೊಳ್ಳಿ, ಬೆನ್ನಿಗೆ ಬಿಸಿ ನೀರಿನ ಬಾಟಲ್ ಅಥವಾ ಬಿಸಿಯಾದ ಬಟ್ಟೆ ಇಡಿ, ಮತ್ತು ನಿಧಾನವಾಗಿ ಚಲಿಸಿ. ನೋವು ತೀವ್ರವಾಗಿದ್ದರೆ ವೈದ್ಯರನ್ನು ಸಂಪರ್ಕಿಸಿ.",
-                "search_query": "home remedies for back pain"
-            }
-        if lang in {"ta", "tamil"}:
-            return {
-                "reply": "முதுகுவலிக்கு லேசான ஓய்வு பெறுங்கள், சூடான நீர் பாட்டில் அல்லது சூடான துணியை வையுங்கள், மெதுவாக நகருங்கள். வலி கடுமையாக இருந்தால் மருத்துவரை அணுகவும்.",
-                "search_query": "home remedies for back pain"
-            }
-        if lang in {"te", "telugu"}:
-            return {
-                "reply": "వెనుక నొప్పికి ఆరాధ్యమైన విశ్రాంతి తీసుకోండి, వేడినీటి బాటిల్ లేదా వేడిగడ్డ ఉంచండి మరియు నెమ్మదిగా కదలండి. నొప్పి తీవ్రంగా ఉంటే డాక్టర్‌ను సంప్రదించండి.",
-                "search_query": "home remedies for back pain"
-            }
-        if lang in {"mr", "marathi"}:
-            return {
-                "reply": "मागील दुख्यांसाठी हलका आराम करा, गरम पाण्याची बाटली किंवा गरम कपडा लावा आणि हळू हळू हालचाल करा. वेदना तीव्र झाल्यास डॉक्टरांना भेटा.",
-                "search_query": "home remedies for back pain"
-            }
-        if lang in {"bn", "bengali"}:
-            return {
-                "reply": "পিঠে ব্যথার জন্য হালকা বিশ্রাম নিন, গরম পানি ভর্তি বোতল বা গরম কাপড় দিন এবং ধীরে ধীরে চলাফেরা করুন। ব্যথা তীব্র হলে চিকিৎসকের পরামর্শ নিন.",
-                "search_query": "home remedies for back pain"
-            }
-        if lang in {"gu", "gujarati"}:
-            return {
-                "reply": "પીઠના દુઃખાવા માટે હળવો આરામ કરો, ગરમ પાણીની બોટલ અથવા ગરમ કપડા વાપરો અને ધીમેથી હલાવો. દુઃખાવો વધારે હોય તો ડૉક્ટરને બતાવો.",
-                "search_query": "home remedies for back pain"
-            }
-        if lang in {"pa", "punjabi"}:
-            return {
-                "reply": "ਪਿੱਠ ਦਰਦ ਲਈ ਹਲਕਾ ਆਰਾਮ ਕਰੋ, ਗਰਮ ਪਾਣੀ ਦੀ ਬੋਤਲ ਜਾਂ ਗਰਮ ਕੱਪੜਾ ਲਗਾਓ ਅਤੇ ਹੌਲੀ-ਹੌਲੀ ਹਿਲੋ। ਦਰਦ ਬਹੁਤ ਤੇਜ਼ ਹੋਵੇ ਤਾਂ ਡਾਕਟਰ ਨੂੰ ਮਿਲੋ.",
+                "reply": "ಬೆನ್ನಿನ ನೋವಿಗೆ ಹಗುರವಾದ ವಿಶ್ರಾಂತಿ ತೆಗೆದುಕೊಳ್ಳಿ, ಬೆನ್ನಿಗೆ ಬಿಸಿ ನೀರಿನ ಬಾಟಲ್ ಅಥವಾ ಬಿಸಿಯಾದ ಬಟ್ಟೆ ಇಡಿ, ಮತ್ತು ನಿಧಾನವಾಗಿ ಚಲಿಸಿ. ನೋವು ತೀವ್ರವಾಗಿದ್ದರೆ ವೈದ್ಯರನ್ನು संपर्कಿಸಿ.",
                 "search_query": "home remedies for back pain"
             }
         return {
@@ -349,12 +336,6 @@ async def voice_assistant(
         lang_search = {
             "kannada": "ಕನ್ನಡ",
             "hindi": "hindi",
-            "tamil": "tamil",
-            "telugu": "telugu",
-            "marathi": "marathi",
-            "bengali": "bengali",
-            "gujarati": "gujarati",
-            "punjabi": "punjabi",
             "english": ""
         }
         lang_suffix = lang_search.get(language, "")
@@ -367,7 +348,14 @@ async def voice_assistant(
             "video_search_url": video_info.get("search_url")
         }
 
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    client = get_groq_client()
+    if not client:
+        return {
+            "reply": "Sorry, the AI assistant is temporarily unavailable.",
+            "navigate_to": None,
+            "videos": [],
+            "video_search_url": None
+        }
 
     health_check_prompt = f"""The user said: "{message}"
 
@@ -380,12 +368,23 @@ If NO (general conversation, navigation request, greeting etc), respond with JSO
 
 Respond ONLY with JSON. No explanation."""
 
-    health_check = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": health_check_prompt}],
-        max_tokens=100,
-        temperature=0
-    )
+    try:
+        health_check = call_groq_chat_with_fallback(
+            client,
+            messages=[{"role": "user", "content": health_check_prompt}],
+            max_tokens=100,
+            temperature=0
+        )
+    except Exception as e:
+        print("voice_assistant Groq error:", e)
+        if isinstance(e, groq_module.NotFoundError) or "model_not_found" in str(e):
+            disable_groq(e)
+        return {
+            "reply": "Sorry, the AI assistant is temporarily unavailable.",
+            "navigate_to": None,
+            "videos": [],
+            "video_search_url": None
+        }
 
     import json as json_lib
     try:
@@ -413,23 +412,28 @@ Rules:
 
 Reply now:"""
 
-        remedy_response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": remedy_prompt}],
-            max_tokens=200,
-            temperature=0.3
-        )
+        try:
+            remedy_response = call_groq_chat_with_fallback(
+                client,
+                messages=[{"role": "user", "content": remedy_prompt}],
+                max_tokens=200,
+                temperature=0.3
+            )
+        except Exception as e:
+            print("voice_assistant remedy Groq error:", e)
+            if isinstance(e, groq_module.NotFoundError) or "model_not_found" in str(e):
+                disable_groq(e)
+            return {
+                "reply": "Sorry, the AI assistant is temporarily unavailable.",
+                "navigate_to": None,
+                "videos": [],
+                "video_search_url": None
+            }
 
         remedy_reply = remedy_response.choices[0].message.content.strip()
         lang_search = {
             "kannada": "ಕನ್ನಡ",
             "hindi": "hindi",
-            "tamil": "tamil",
-            "telugu": "telugu",
-            "marathi": "marathi",
-            "bengali": "bengali",
-            "gujarati": "gujarati",
-            "punjabi": "punjabi",
             "english": ""
         }
         lang_suffix = lang_search.get(language, "")
@@ -464,14 +468,25 @@ IMPORTANT: "khana" means food, NOT medical records. Only navigate if medical int
 
 User said: {message}"""
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": message}
-        ],
-        max_tokens=150
-    )
+    try:
+        response = call_groq_chat_with_fallback(
+            client,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": message}
+            ],
+            max_tokens=150
+        )
+    except Exception as e:
+        print("voice_assistant Groq error:", e)
+        if isinstance(e, groq_module.NotFoundError) or "model_not_found" in str(e):
+            disable_groq(e)
+        return {
+            "reply": "Sorry, the AI assistant is temporarily unavailable.",
+            "navigate_to": None,
+            "videos": [],
+            "video_search_url": None
+        }
 
     reply = response.choices[0].message.content.strip()
 
@@ -507,21 +522,59 @@ async def scan_prescription(
         return {"error": "User not found"}
 
     image_bytes = await file.read()
-    raw_text = extract_text_from_image(image_bytes)
 
-    if not raw_text:
-        return {"error": "Could not read text from image. Please try a clearer photo."}
+    # shrink very large uploads to avoid long OCR times or memory issues
+    def shrink_image_bytes(img_bytes, max_bytes=3_000_000, max_dim=2000):
+        try:
+            if len(img_bytes) <= max_bytes:
+                return img_bytes
+            img = Image.open(_io.BytesIO(img_bytes)).convert("RGB")
+            w, h = img.size
+            if max(w, h) > max_dim:
+                scale = max_dim / float(max(w, h))
+                new_size = (int(w * scale), int(h * scale))
+                img = img.resize(new_size, Image.LANCZOS)
+            out = _io.BytesIO()
+            img.save(out, format="JPEG", quality=80)
+            return out.getvalue()
+        except Exception:
+            return img_bytes
 
-    groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    image_bytes = shrink_image_bytes(image_bytes)
+
+    try:
+        raw_text = extract_text_from_image(image_bytes)
+        if not raw_text:
+            return {"error": "Could not read text from image. Please try a clearer photo."}
+    except Exception as e:
+        print("scan_prescription error:", e)
+        traceback.print_exc()
+        return {"error": "Server error while processing image. Try a smaller/clearer photo."}
+
     note = None
     medicines = []
 
     if is_non_tablet_prescription(raw_text):
         note = "This prescription looks like IV/fluids/ORS instructions, not tablet medicines."
     else:
-        medicines = extract_medicines_with_ai(raw_text, groq_client) or []
+        # Prefer AI extraction when Groq client is available, but be resilient.
+        groq_client = get_groq_client()
+        if groq_client:
+            try:
+                medicines = extract_medicines_with_ai(raw_text, groq_client) or []
+            except Exception as e:
+                print("Groq extraction failed:", e)
+                if isinstance(e, groq_module.NotFoundError) or "model_not_found" in str(e).lower() or "model_decommissioned" in str(e).lower():
+                    disable_groq(e)
+                medicines = []
+
+        # Fallback to local extractor if AI not available or returned nothing
         if not medicines:
-            note = "No tablet medicines found. Please verify your prescription."
+            medicines = extract_medicines_locally(raw_text) or []
+            if medicines:
+                note = "Parsed using local OCR-only extractor (no AI). Results may be approximate."
+            else:
+                note = "No tablet medicines found. Please verify your prescription."
 
     speech_text = medicines_to_speech(medicines, language)
 
@@ -579,34 +632,40 @@ def get_documents(user_id: int, db: DBSession = Depends(get_db)):
 
 @app.get("/medicine-info")
 async def get_medicine_info(medicine: str, language: str = "english"):
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    client = get_groq_client()
+    if not client:
+        # AI not available in this environment — return empty description so frontend can continue
+        return {"description": ""}
 
-    prompt = f"""You are a careful medical assistant.
+    try:
+
+        prompt = f"""You are a careful medical assistant.
 You are given a medicine name exactly as extracted from a prescription.
 If the medicine is known, explain what it is used for in one simple sentence.
 If the medicine is not known or you are not sure, respond only with: Unknown medicine.
 Write in {language} language. Keep it very simple for a non-literate rural person to understand when read aloud.
 Do not include any medical jargon. Max 15 words."""
 
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        max_tokens=50,
-        temperature=0
-    )
+        response = call_groq_chat_with_fallback(
+            client,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=50,
+            temperature=0
+        )
 
-    description = response.choices[0].message.content.strip()
-    if "unknown" in description.lower():
-        description = ""
-
-    return {"description": description}
+        description = response.choices[0].message.content.strip()
+        if "unknown" in description.lower():
+            description = ""
+        return {"description": description}
+    except Exception as e:
+        print("medicine-info Groq error:", e)
+        if isinstance(e, groq_module.NotFoundError) or "model_not_found" in str(e):
+            disable_groq(e)
+        return {"description": ""}
 @app.post("/identify-tablet")
 async def identify_tablet(file: UploadFile = File(...)):
-    import base64
     image_bytes = await file.read()
-    image_b64 = base64.b64encode(image_bytes).decode()
-
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    client = get_groq_client()
 
     ocr_text = extract_text_from_image(image_bytes)
     if ocr_text:
@@ -618,21 +677,44 @@ If the extracted text contains the medicine name, use that.
 Return JSON only: {"medicine": "name", "description": "what it is used for in simple words", "found": true/false}"""
 
     if ocr_text:
-        prompt_text += f"\n\nOCR text: {ocr_text}"
+        short_ocr = ocr_text if len(ocr_text) <= 1000 else ocr_text[:1000] + "\n...[truncated]"
+        prompt_text += f"\n\nOCR text: {short_ocr}"
 
     try:
         if not ocr_text:
             return {"error": "Could not read any tablet text from the image. Please try a clearer photo or enter the medicine name manually."}
 
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{
-                "role": "user",
-                "content": prompt_text
-            }],
-            max_tokens=150,
-            temperature=0
-        )
+        if not client:
+            # AI not available; try local normalization to guess the medicine name
+            try:
+                norm = normalize_medicine_name(ocr_text)
+                if norm and norm.strip() and norm.lower() != ocr_text.lower():
+                    return {"found": True, "medicine": norm, "description": "", "ocr_text": ocr_text, "note": "Matched locally using normalization (no AI)."}
+            except Exception:
+                pass
+            # fallback: return OCR preview so frontend can show it to user
+            return {"found": False, "ocr_text": ocr_text, "note": "AI unavailable: showing OCR text for manual verification."}
+
+        try:
+            response = call_groq_chat_with_fallback(
+                client,
+                messages=[{
+                    "role": "user",
+                    "content": prompt_text
+                }],
+                max_tokens=150,
+                temperature=0
+            )
+        except Exception as e:
+            print("Tablet identify Groq error:", e)
+            if isinstance(e, groq_module.NotFoundError) or "model_not_found" in str(e):
+                disable_groq(e)
+            # Fallback: return OCR text instead of failing completely
+            return {
+                "found": False,
+                "ocr_text": ocr_text,
+                "note": f"Tablet identification failed on server: {e}. Showing OCR text as fallback."
+            }
 
         import json
         result = response.choices[0].message.content.strip()
@@ -642,9 +724,11 @@ Return JSON only: {"medicine": "name", "description": "what it is used for in si
         import traceback
         print("Tablet identify error:", e)
         traceback.print_exc()
+        # Fallback: return OCR text instead of failing completely
         return {
-            "error": f"Tablet identification failed on the server: {e}",
-            "debug": traceback.format_exc()
+            "found": False,
+            "ocr_text": ocr_text,
+            "note": f"Tablet identification failed on server: {e}. Showing OCR text as fallback."
         }
     return {"documents": [
         {

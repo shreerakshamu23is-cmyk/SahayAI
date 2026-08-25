@@ -123,7 +123,30 @@ function RegisterFace() {
     setMessage("")
 
     try {
-      const blob = await fetch(photo).then(r => r.blob())
+      // resize the image client-side to speed up upload and server processing
+      const resizeDataUrl = (dataUrl, maxDim = 800) => {
+        return new Promise((resolve) => {
+          const img = new Image()
+          img.onload = () => {
+            const canvas = document.createElement('canvas')
+            let { width: w, height: h } = img
+            if (Math.max(w, h) > maxDim) {
+              const scale = maxDim / Math.max(w, h)
+              w = Math.round(w * scale)
+              h = Math.round(h * scale)
+            }
+            canvas.width = w
+            canvas.height = h
+            const ctx = canvas.getContext('2d')
+            ctx.drawImage(img, 0, 0, w, h)
+            resolve(canvas.toDataURL('image/jpeg', 0.8))
+          }
+          img.src = dataUrl
+        })
+      }
+
+      const smallDataUrl = await resizeDataUrl(photo, 800)
+      const blob = await fetch(smallDataUrl).then(r => r.blob())
       const formData = new FormData()
       formData.append("file", blob, "face.jpg")
 

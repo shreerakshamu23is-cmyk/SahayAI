@@ -109,10 +109,8 @@ function Dashboard() {
   const [voiceStatus, setVoiceStatus] = useState("")
 
   const langCodes = {
-    kannada: "kn-IN", hindi: "hi-IN",
-    tamil: "ta-IN", telugu: "te-IN",
-    marathi: "mr-IN", bengali: "bn-IN",
-    gujarati: "gu-IN", punjabi: "pa-IN",
+    kannada: "kn-IN",
+    hindi: "hi-IN",
     english: "en-US",
   }
 
@@ -236,8 +234,6 @@ function Dashboard() {
               <div className="video-title">
                 🎥 {language === "kannada" ? "ಮನೆ ಮದ್ದು ವೀಡಿಯೋ" :
                   language === "hindi" ? "घरेलू उपाय वीडियो" :
-                  language === "tamil" ? "வீட்டு வைத்தியம் வீடியோ" :
-                  language === "telugu" ? "ఇంటి వైద్యం వీడియో" :
                   "Home remedy video"}
               </div>
               {videoInfo.embed_url ? (
@@ -297,12 +293,6 @@ function Dashboard() {
                 <div className="module-title">
                   {language === "kannada" ? "ಸರ್ಕಾರಿ ಯೋಜನೆಗಳು" :
                   language === "hindi" ? "सरकारी योजनाएं" :
-                  language === "tamil" ? "அரசு திட்டங்கள்" :
-                  language === "telugu" ? "ప్రభుత్వ పథకాలు" :
-                  language === "marathi" ? "सरकारी योजना" :
-                  language === "bengali" ? "সরকারি প্রকল্প" :
-                  language === "gujarati" ? "સરકારી યોજનાઓ" :
-                  language === "punjabi" ? "ਸਰਕਾਰੀ ਯੋਜਨਾਵਾਂ" :
                   "Govt Schemes"}
             </div>
             <div className="module-desc">

@@ -7,13 +7,27 @@ import io
 def encode_face_from_bytes(image_bytes):
     try:
         image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        # downscale large images to speed up face detection/encoding
+        max_dim = 800
+        w, h = image.size
+        if max(w, h) > max_dim:
+            scale = max_dim / float(max(w, h))
+            new_size = (int(w * scale), int(h * scale))
+            image = image.resize(new_size, Image.LANCZOS)
+
         img_array = np.array(image)
-        
-        encodings = face_recognition.face_encodings(img_array)
+
+        # use HOG model for faster CPU-based detection; get face locations first
+        locations = face_recognition.face_locations(img_array, model='hog')
+        if not locations:
+            return None
+
+        # compute encodings for found locations (num_jitters kept low for speed)
+        encodings = face_recognition.face_encodings(img_array, known_face_locations=locations, num_jitters=1)
         
         if len(encodings) == 0:
             return None
-        
+
         return encodings[0]
         
     except Exception as e:

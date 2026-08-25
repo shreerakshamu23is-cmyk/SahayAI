@@ -95,12 +95,6 @@ const styles = `
 const langNames = {
   kannada: "Kannada — ಕನ್ನಡ",
   hindi: "Hindi — हिन्दी",
-  tamil: "Tamil — தமிழ்",
-  telugu: "Telugu — తెలుగు",
-  marathi: "Marathi — मराठी",
-  bengali: "Bengali — বাংলা",
-  gujarati: "Gujarati — ગુજરાતી",
-  punjabi: "Punjabi — ਪੰਜਾਬੀ",
   english: "English",
 }
 

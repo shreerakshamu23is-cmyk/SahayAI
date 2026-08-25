@@ -163,15 +163,9 @@ function Register() {
               <div className="input-wrap">
                 <span className="input-icon">🗣️</span>
                 <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-                 <option value="english">English</option>
+                  <option value="english">English</option>
                   <option value="hindi">Hindi — हिन्दी</option>
                   <option value="kannada">Kannada — ಕನ್ನಡ</option>
-                  <option value="tamil">Tamil — தமிழ்</option>
-                  <option value="telugu">Telugu — తెలుగు</option>
-                  <option value="marathi">Marathi — मराठी</option>
-                  <option value="bengali">Bengali — বাংলা</option>
-                  <option value="gujarati">Gujarati — ગુજરાતી</option>
-                  <option value="punjabi">Punjabi — ਪੰਜਾਬੀ</option>
                 </select>
               </div>
             </div>
