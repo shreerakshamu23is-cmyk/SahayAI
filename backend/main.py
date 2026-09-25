@@ -3,7 +3,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session as DBSession
 from pydantic import BaseModel
+import json
 from modules.ocr import (
+    analyze_prescription,
+    identify_tablet_image,
     extract_text_from_image,
     extract_medicines_locally,
     medicines_to_speech,
@@ -372,45 +375,22 @@ async def scan_prescription(
         return {"error": "User not found"}
 
     image_bytes = await file.read()
+    if not image_bytes:
+        return {"error": "Empty file uploaded."}
 
-    def shrink_image_bytes(img_bytes, max_bytes=3_000_000, max_dim=2000):
-        try:
-            if len(img_bytes) <= max_bytes:
-                return img_bytes
-            img = Image.open(_io.BytesIO(img_bytes)).convert("RGB")
-            w, h = img.size
-            if max(w, h) > max_dim:
-                scale = max_dim / float(max(w, h))
-                new_size = (int(w * scale), int(h * scale))
-                img = img.resize(new_size, Image.LANCZOS)
-            out = _io.BytesIO()
-            img.save(out, format="JPEG", quality=80)
-            return out.getvalue()
-        except Exception:
-            return img_bytes
-
-    image_bytes = shrink_image_bytes(image_bytes)
-
+    # Call Sanjay's multimodal prescription analyzer via ocr module
     try:
-        raw_text = extract_text_from_image(image_bytes)
-        if not raw_text:
-            return {"error": "Could not read text from image. Please try a clearer photo."}
+        result = analyze_prescription(image_bytes)
+        if "error" in result:
+            return {"error": result["error"]}
     except Exception as e:
         print("scan_prescription error:", e)
         traceback.print_exc()
-        return {"error": "Server error while processing image. Try a smaller/clearer photo."}
+        return {"error": "Server error while processing prescription image."}
 
-    note = None
-    medicines = []
-
-    if is_non_tablet_prescription(raw_text):
-        note = "This prescription looks like IV/fluids/ORS instructions, not tablet medicines."
-    else:
-        medicines = extract_medicines_locally(raw_text) or []
-        if medicines:
-            note = "Parsed using local medical OCR engine."
-        else:
-            note = "No tablet medicines found. Please verify your prescription photo."
+    raw_text = result.get("raw_text", "")
+    medicines = result.get("medicines", [])
+    note = result.get("note")
 
     speech_text = medicines_to_speech(medicines, language)
 
@@ -433,7 +413,24 @@ async def scan_prescription(
         except Exception as e:
             print("Scan prescription Bhashini TTS error:", e)
 
+    # Save prescription to SQLite Database
+    try:
+        new_prescription = Prescription(
+            user_id=user_id,
+            raw_text=raw_text,
+            medicines_json=json.dumps(medicines),
+            speech_text=speech_text,
+        )
+        db.add(new_prescription)
+        db.commit()
+        db.refresh(new_prescription)
+        prescription_id = new_prescription.id
+    except Exception as db_err:
+        print("Database save error:", db_err)
+        prescription_id = None
+
     return {
+        "prescription_id": prescription_id,
         "raw_text": raw_text,
         "medicines": medicines,
         "speech_text": speech_text,
@@ -522,18 +519,33 @@ async def get_medicine_info(medicine: str, language: str = "english"):
     return {"description": description, "audio_base64": audio_base64}
 
 @app.post("/identify-tablet")
-async def identify_tablet(file: UploadFile = File(...)):
+async def identify_tablet(
+    file: UploadFile = File(...),
+    language: str = "english"
+):
     image_bytes = await file.read()
-    ocr_text = extract_text_from_image(image_bytes)
-    if not ocr_text:
-        return {"found": False, "ocr_text": "", "note": "Could not read text from tablet packaging. Please try a clearer photo."}
+    if not image_bytes:
+        return {"found": False, "medicine": "", "description": "", "note": "Empty file uploaded."}
 
-    norm = normalize_medicine_name(ocr_text)
-    desc = f"{norm} is used as prescribed by doctor."
-    return {
-        "found": True,
-        "medicine": norm,
-        "description": desc,
-        "ocr_text": ocr_text,
-        "note": "Identified using OCR and medical dictionary."
-    }
+    res = identify_tablet_image(image_bytes)
+    if res.get("found") and res.get("description"):
+        target_lang = (language or "english").lower()
+        original_desc = res["description"]
+        if target_lang not in {"en", "english"}:
+            try:
+                translated_desc = bhashini_translate(original_desc, target_lang=target_lang, source_lang="english")
+                if translated_desc:
+                    res["description"] = translated_desc
+            except Exception as e:
+                print("Identify tablet Bhashini translate error:", e)
+
+        speech_text = f"{res.get('medicine')}. {res.get('description')}"
+        res["speech_text"] = speech_text
+
+        if is_bhashini_available():
+            try:
+                res["audio_base64"] = bhashini_tts(speech_text, lang=target_lang)
+            except Exception as e:
+                print("Identify tablet Bhashini TTS error:", e)
+
+    return res

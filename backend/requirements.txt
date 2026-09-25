@@ -1,3 +1,8 @@
 fastapi
 uvicorn
 python-dotenv
+google-genai
+pillow
+pytesseract
+opencv-python
+sqlalchemy

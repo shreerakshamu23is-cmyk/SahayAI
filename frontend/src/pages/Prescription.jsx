@@ -5,142 +5,152 @@ import appTranslations from "../translations"
 
 const styles = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: 'Segoe UI', sans-serif; background: #f9f9f7; }
-  .page { min-height: 100vh; }
+  body { font-family: 'Plus Jakarta Sans', sans-serif; background: #F4F8F6; color: #111827; }
+  .page { min-height: 100vh; background: #F4F8F6; }
   .topbar {
-    background: #0F6E56; padding: 16px 24px;
+    background: linear-gradient(135deg, #044E3B 0%, #0F6E56 60%, #085041 100%);
+    padding: 1rem 2rem;
     display: flex; justify-content: space-between; align-items: center;
+    box-shadow: 0 4px 20px rgba(4, 78, 59, 0.15);
+    position: sticky; top: 0; z-index: 50;
   }
-  .logo { color: white; font-weight: 700; font-size: 1.3rem; }
+  .logo { color: white; font-weight: 800; font-size: 1.35rem; letter-spacing: -0.5px; display: flex; align-items: center; gap: 8px; }
   .back {
-    background: rgba(255,255,255,0.15); border: none;
-    color: white; padding: 8px 16px; border-radius: 8px; cursor: pointer;
+    background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25);
+    color: white; padding: 7px 16px; border-radius: 10px; cursor: pointer;
+    font-weight: 600; font-size: 0.85rem; transition: all 0.2s ease;
   }
-  .content { padding: 1.5rem; max-width: 900px; margin: 0 auto; }
-  .page-title { font-size: 1.3rem; font-weight: 700; color: #1a1a1a; margin-bottom: .2rem; }
-  .page-sub { font-size: .85rem; color: #888; margin-bottom: 1.2rem; }
+  .back:hover { background: rgba(255,255,255,0.25); transform: translateY(-1px); }
+  
+  .content { padding: 2rem 1.5rem 3rem; max-width: 1040px; margin: 0 auto; }
+  .page-title { font-size: 1.5rem; font-weight: 800; color: #044E3B; margin-bottom: 4px; letter-spacing: -0.3px; }
+  .page-sub { font-size: 0.9rem; color: #6B7280; margin-bottom: 1.5rem; }
 
-  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
-  @media(max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+  @media(max-width: 768px) { .two-col { grid-template-columns: 1fr; } }
 
   .panel {
-    background: white; border-radius: 16px;
-    border: 0.5px solid #e8e8e4; overflow: hidden;
+    background: white; border-radius: 18px;
+    border: 1px solid #E5EFEA; overflow: hidden;
+    box-shadow: 0 6px 20px rgba(15, 110, 86, 0.05);
+    display: flex; flex-direction: column;
   }
   .panel-header {
-    background: #0F6E56; padding: 12px 16px;
-    color: white; font-weight: 700; font-size: .95rem;
-    display: flex; align-items: center; gap: 8px;
+    background: linear-gradient(135deg, #044E3B 0%, #0F6E56 100%); padding: 14px 20px;
+    color: white; font-weight: 700; font-size: 0.98rem;
+    display: flex; align-items: center; gap: 10px;
+    letter-spacing: -0.2px;
   }
-  .panel-body { padding: 1rem; }
+  .panel-body { padding: 1.25rem; flex: 1; display: flex; flex-direction: column; justify-content: space-between; }
 
   .camera-box {
-    width: 100%; border-radius: 10px; overflow: hidden;
-    background: #1a1a1a; margin-bottom: .8rem;
+    width: 100%; border-radius: 14px; overflow: hidden;
+    background: #111827; margin-bottom: 1rem;
     aspect-ratio: 4/3; position: relative;
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.5);
   }
   .camera-box video { width: 100%; height: 100%; object-fit: cover; display: block; }
   .camera-box img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .camera-placeholder {
-    width: 100%; aspect-ratio: 4/3; border-radius: 10px;
-    background: #f0f0f0; display: flex; flex-direction: column;
+    width: 100%; aspect-ratio: 4/3; border-radius: 14px;
+    background: #F8FAF9; display: flex; flex-direction: column;
     align-items: center; justify-content: center;
-    color: #888; font-size: .85rem; margin-bottom: .8rem;
-    border: 2px dashed #ccc;
+    color: #6B7280; font-size: 0.88rem; margin-bottom: 1rem;
+    border: 2px dashed #CBD5E1; text-align: center; padding: 1rem;
   }
-  .camera-placeholder-icon { font-size: 3rem; margin-bottom: .5rem; }
+  .camera-placeholder-icon { font-size: 3.2rem; margin-bottom: 0.5rem; opacity: 0.8; }
 
   .btn {
-    width: 100%; padding: 11px; background: #0F6E56;
-    color: white; border: none; border-radius: 10px;
-    font-size: .9rem; font-weight: 600; cursor: pointer;
-    margin-bottom: .6rem; transition: background .2s;
+    width: 100%; padding: 12px;
+    background: linear-gradient(135deg, #0F6E56 0%, #085041 100%);
+    color: white; border: none; border-radius: 12px;
+    font-size: 0.92rem; font-weight: 700; cursor: pointer;
+    margin-bottom: 0.7rem; transition: all 0.2s ease;
+    box-shadow: 0 4px 14px rgba(15, 110, 86, 0.2);
   }
-  .btn:hover { background: #085041; }
-  .btn:disabled { background: #aaa; cursor: not-allowed; }
+  .btn:hover { background: linear-gradient(135deg, #085041 0%, #044E3B 100%); transform: translateY(-1px); box-shadow: 0 6px 18px rgba(15, 110, 86, 0.3); }
+  .btn:disabled { background: #9CA3AF; cursor: not-allowed; box-shadow: none; transform: none; }
+  
   .btn-outline {
     width: 100%; padding: 11px; background: white;
     color: #0F6E56; border: 1.5px solid #0F6E56;
-    border-radius: 10px; font-size: .9rem;
-    font-weight: 600; cursor: pointer; margin-bottom: .6rem;
+    border-radius: 12px; font-size: 0.9rem;
+    font-weight: 700; cursor: pointer; margin-bottom: 0.7rem;
+    transition: all 0.2s ease;
   }
+  .btn-outline:hover { background: #F0FAF5; transform: translateY(-1px); }
+
   .btn-dashed {
-    width: 100%; padding: 11px; background: #f0faf5;
+    width: 100%; padding: 11px; background: #F0FAF5;
     color: #0F6E56; border: 1.5px dashed #0F6E56;
-    border-radius: 10px; font-size: .9rem;
-    font-weight: 600; cursor: pointer; margin-bottom: .6rem;
+    border-radius: 12px; font-size: 0.9rem;
+    font-weight: 700; cursor: pointer; margin-bottom: 0.7rem;
+    transition: all 0.2s ease;
   }
+  .btn-dashed:hover { background: #E1F5EE; }
+
   .btn-dark {
-    width: 100%; padding: 11px; background: #1a1a1a;
-    color: white; border: none; border-radius: 10px;
-    font-size: .9rem; font-weight: 600; cursor: pointer;
-    margin-bottom: .6rem;
+    width: 100%; padding: 12px; background: #1F2937;
+    color: white; border: none; border-radius: 12px;
+    font-size: 0.92rem; font-weight: 700; cursor: pointer;
+    margin-bottom: 0.7rem; transition: all 0.2s ease;
+    box-shadow: 0 4px 12px rgba(31, 41, 55, 0.15);
   }
+  .btn-dark:hover { background: #111827; transform: translateY(-1px); }
 
   .warning-box {
-    background: #FFF3CD; border: 1px solid #FFD700;
-    border-radius: 8px; padding: 8px 12px;
-    font-size: .78rem; color: #856404; margin-bottom: .8rem;
+    background: #FEF3C7; border: 1px solid #FCD34D;
+    border-radius: 10px; padding: 10px 14px;
+    font-size: 0.82rem; color: #92400E; margin-bottom: 1rem;
+    display: flex; align-items: center; gap: 8px; font-weight: 500;
   }
-  .med-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; margin-bottom: .8rem; }
-  @media(max-width: 500px) { .med-grid { grid-template-columns: 1fr; } }
+  .med-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1rem; }
+  @media(max-width: 600px) { .med-grid { grid-template-columns: 1fr; } }
 
   .med-card {
-    background: #f0faf5; border-radius: 12px;
-    padding: 12px; border: 1px solid #9FE1CB;
+    background: linear-gradient(135deg, #F0FAF5 0%, #FFFFFF 100%);
+    border-radius: 14px; padding: 14px;
+    border: 1px solid #D1EBE1;
+    box-shadow: 0 2px 8px rgba(15, 110, 86, 0.04);
   }
-  .med-card-top { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-  .med-card-name { font-weight: 700; color: #085041; font-size: .95rem; }
-  .med-card-dose { font-size: .78rem; color: #0F6E56; }
-  .med-card-desc { font-size: .75rem; color: #555; margin-bottom: 8px; font-style: italic; }
-  .time-icons { display: flex; gap: 6px; flex-wrap: wrap; }
+  .med-card-top { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+  .med-card-name { font-weight: 800; color: #044E3B; font-size: 1rem; }
+  .med-card-dose { font-size: 0.82rem; color: #0F6E56; font-weight: 600; }
+  .med-card-desc { font-size: 0.8rem; color: #4B5563; margin-bottom: 10px; font-style: italic; background: #FFFFFF; padding: 6px 10px; border-radius: 8px; border: 1px solid #E5EFEA; }
+  .time-icons { display: flex; gap: 8px; flex-wrap: wrap; }
   .time-icon-box {
-    background: white; border-radius: 8px;
-    padding: 6px 10px; border: 1px solid #9FE1CB;
+    background: white; border-radius: 10px;
+    padding: 6px 12px; border: 1px solid #D1EBE1;
     display: flex; flex-direction: column;
-    align-items: center; gap: 2px; min-width: 52px;
+    align-items: center; gap: 2px; min-width: 58px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.02);
   }
-  .time-icon-label { font-size: .65rem; color: #888; }
-  .time-icon-tab { font-size: .7rem; font-weight: 600; color: #085041; }
-  .med-duration { font-size: .75rem; color: #888; margin-top: 6px; }
+  .time-icon-label { font-size: 0.7rem; color: #6B7280; font-weight: 500; }
+  .time-icon-tab { font-size: 0.75rem; font-weight: 700; color: #044E3B; }
+  .med-duration { font-size: 0.78rem; color: #6B7280; margin-top: 8px; font-weight: 600; display: flex; align-items: center; gap: 4px; }
 
-  .result-title { font-weight: 700; color: #1a1a1a; margin-bottom: .6rem; font-size: 1rem; }
-
-  .reminder-item {
-    background: #fafafa; border-radius: 10px;
-    padding: 10px 12px; margin-bottom: .6rem;
-    border: 0.5px solid #e8e8e4;
-  }
-  .reminder-top { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px; }
-  .reminder-med-name { font-weight: 600; color: #1a1a1a; font-size: .85rem; }
-  .reminder-freq { font-size: .75rem; color: #888; }
-  .reminder-times { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
-  .time-col { display: flex; flex-direction: column; gap: 3px; }
-  .time-label { font-size: .7rem; color: #888; }
-  .time-input {
-    padding: 5px 8px; border-radius: 7px;
-    border: 1.5px solid #e0e0dc;
-    font-size: .85rem; background: #fafafa; width: 90px;
-  }
+  .result-title { font-weight: 800; color: #044E3B; margin-bottom: 0.8rem; font-size: 1.1rem; }
 
   .tablet-result {
-    background: #E1F5EE; border-radius: 10px;
-    padding: 12px; border: 1px solid #9FE1CB; margin-bottom: .6rem;
+    background: linear-gradient(135deg, #E1F5EE 0%, #E6F7F2 100%);
+    border-radius: 14px; padding: 14px 16px;
+    border: 1px solid #9FE1CB; margin-bottom: 0.8rem;
+    box-shadow: 0 4px 12px rgba(15, 110, 86, 0.06);
   }
-  .tablet-result-name { font-weight: 700; color: #085041; font-size: 1rem; margin-bottom: 4px; }
-  .tablet-result-desc { font-size: .85rem; color: #0F6E56; }
+  .tablet-result-name { font-weight: 800; color: #044E3B; font-size: 1.08rem; margin-bottom: 6px; }
+  .tablet-result-desc { font-size: 0.88rem; color: #0F6E56; line-height: 1.4; }
 
   .msg-error {
-    padding: 10px; background: #FCEBEB;
-    border-radius: 8px; color: #A32D2D;
-    font-size: .85rem; margin-bottom: .8rem;
-    border: 1px solid #F7C1C1;
+    padding: 12px; background: #FEE2E2;
+    border-radius: 10px; color: #991B1B;
+    font-size: 0.85rem; margin-bottom: 0.8rem;
+    border: 1px solid #FCA5A5; font-weight: 500;
   }
   .msg-success {
-    padding: 10px; background: #E1F5EE;
-    border-radius: 8px; color: #085041;
-    font-size: .85rem; margin-bottom: .6rem;
-    border: 1px solid #9FE1CB; text-align: center;
+    padding: 12px; background: #E1F5EE;
+    border-radius: 10px; color: #044E3B;
+    font-size: 0.85rem; margin-bottom: 0.6rem;
+    border: 1px solid #9FE1CB; text-align: center; font-weight: 600;
   }
 `
 
@@ -294,7 +304,7 @@ function Prescription() {
       formData.append("file", blob, "tablet.jpg")
 
       const response = await fetch(
-        "http://localhost:8000/identify-tablet",
+        `http://localhost:8000/identify-tablet?language=${language}`,
         { method: "POST", body: formData }
       )
       if (!response.ok) {
@@ -308,7 +318,7 @@ function Prescription() {
         setTabletError(data.error)
       } else if (data.found) {
         setTabletResult(data)
-        speakHelper(`This appears to be ${data.medicine}. ${data.description}`)
+        speakHelper(data.speech_text || `${data.medicine}. ${data.description}`, language, data.audio_base64)
       } else {
         setTabletError("Could not identify the tablet. Try a clearer photo showing the tablet name.")
       }
@@ -541,7 +551,7 @@ function Prescription() {
                     <button
                       className="btn"
                       style={{ marginTop: "10px" }}
-                      onClick={() => speakHelper(`This is ${tabletResult.medicine}. ${tabletResult.description}`)}
+                      onClick={() => speakHelper(tabletResult.speech_text || `${tabletResult.medicine}. ${tabletResult.description}`, language, tabletResult.audio_base64)}
                     >
                       {t.readAloudTablet}
                     </button>
@@ -633,68 +643,7 @@ function Prescription() {
                 🔊 {t.readAloud}
               </button>
 
-              {/* Reminders */}
-              <div style={{
-                marginTop: "1rem", padding: "1rem",
-                background: "#f0faf5", borderRadius: "12px",
-                border: "1px solid #9FE1CB"
-              }}>
-                <div style={{ fontWeight: 700, fontSize: ".95rem", color: "#085041", marginBottom: ".3rem" }}>
-                  ⏰ {t.setReminders}
-                </div>
-                <p style={{ fontSize: ".8rem", color: "#0F6E56", marginBottom: ".8rem" }}>
-                  {t.reminderSub}
-                </p>
 
-                {result.medicines && result.medicines.map((med, i) => {
-                  const freq = getFrequencyTimes(med.frequency)
-                  return (
-                    <div key={i} className="reminder-item">
-                      <div className="reminder-top">
-                        <div>
-                          <div className="reminder-med-name">{med.medicine}</div>
-                          <div className="reminder-freq">{med.frequency}</div>
-                        </div>
-                      </div>
-                      <div className="reminder-times">
-                        <div className="time-col">
-                          <label className="time-label">🌅 {t.morning}</label>
-                          <input type="time" defaultValue="08:00"
-                            id={`reminder-${i}`} className="time-input" />
-                        </div>
-                        {(freq === "twice" || freq === "three" || freq === "four") && (
-                          <div className="time-col">
-                            <label className="time-label">☀️ {t.afternoon}</label>
-                            <input type="time" defaultValue="14:00"
-                              id={`reminder2-${i}`} className="time-input" />
-                          </div>
-                        )}
-                        {(freq === "three" || freq === "four") && (
-                          <div className="time-col">
-                            <label className="time-label">🌆 {t.evening}</label>
-                            <input type="time" defaultValue="20:00"
-                              id={`reminder3-${i}`} className="time-input" />
-                          </div>
-                        )}
-                        {freq === "four" && (
-                          <div className="time-col">
-                            <label className="time-label">🌙 {t.night}</label>
-                            <input type="time" defaultValue="22:00"
-                              id={`reminder4-${i}`} className="time-input" />
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )
-                })}
-
-                <button className="btn" onClick={() => setupReminders(result.medicines)}>
-                  🔔 {t.setAllReminders}
-                </button>
-                {reminderSet && (
-                  <div className="msg-success">{t.remindersSet}</div>
-                )}
-              </div>
 
               <details style={{ marginTop: "1rem" }}>
                 <summary style={{ cursor: "pointer", color: "#888", fontSize: ".8rem" }}>

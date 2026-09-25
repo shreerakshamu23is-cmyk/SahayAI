@@ -85,11 +85,14 @@ const styles = `
     color: #1a1a1a; display: flex; align-items: center; justify-content: center; gap: 8px;
   }
   .action-btn:hover { border-color: #0F6E56; color: #0F6E56; }
-  .action-btn.danger { border-color: #F7C1C1; color: #A32D2D; background: #FCEBEB; }
-  .loading { text-align: center; padding: 3rem; color: #888; }
- @media(max-width: 600px) {
-    .hero-card { flex-direction: row; text-align: left; }
-    .badges { justify-content: flex-start; }
+  .action-btn.danger { border-color: #FCA5A5; color: #991B1B; background: #FEE2E2; }
+  .loading { text-align: center; padding: 3rem; color: #6B7280; font-weight: 600; }
+  @media(max-width: 600px) {
+    .hero-card { flex-direction: column; text-align: center; align-items: center; }
+    .badges { justify-content: center; }
+    .stats-grid { grid-template-columns: 1fr; }
+    .action-row { grid-template-columns: 1fr; }
+  }
 `
 
 const langNames = {
