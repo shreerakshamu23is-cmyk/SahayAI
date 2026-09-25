@@ -1,6 +1,6 @@
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
-import { unlockVoice, speakText as speakHelper } from "../voiceHelper"
+import { unlockVoice, speakText as speakHelper, stopVoice } from "../voiceHelper"
 import appTranslations from "../translations"
 
 const styles = `
@@ -172,6 +172,12 @@ function Prescription() {
   const [tabletError, setTabletError] = useState("")
   const [tabletMode, setTabletMode] = useState("options")
 
+  useEffect(() => {
+    return () => {
+      stopVoice()
+    }
+  }, [])
+
   const startCamera = async () => {
     setMode("camera")
     try {
@@ -248,7 +254,7 @@ function Prescription() {
         setError(data.error)
       } else {
         setResult(data)
-        speakHelper(data.speech_text)
+        speakHelper(data.speech_text, language, data.audio_base64)
         fetchMedicineDescriptions(data.medicines)
       }
     } catch (err) {
@@ -623,7 +629,7 @@ function Prescription() {
                 )}
               </div>
 
-              <button className="btn-dark" onClick={() => speakHelper(result.speech_text)}>
+              <button className="btn-dark" onClick={() => speakHelper(result.speech_text, language, result.audio_base64)}>
                 🔊 {t.readAloud}
               </button>
 

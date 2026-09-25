@@ -67,9 +67,9 @@ const styles = `
 
 const speakGreeting = (name, language) => {
   const greetings = {
-    kannada: `Namaskara ${name}, Swagata!`,
-    hindi: `Namaste ${name}, Swagat hai!`,
-    english: `Hello ${name}, welcome to SahayAI!`,
+    kannada: `Namaskara ${name}, Swagata`,
+    hindi: `Namaste ${name}, Swagat hai`,
+    english: `Hello ${name}, welcome to Sahay AI`,
   }
   const text = greetings[language] || greetings["english"]
   speakText(text)
@@ -89,7 +89,12 @@ function LoginFace() {
 
   useEffect(() => {
     startCamera()
-    return () => stopCamera()
+    return () => {
+      stopCamera()
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel()
+      }
+    }
   }, [])
 
   const startCamera = async () => {

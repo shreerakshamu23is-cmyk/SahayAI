@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
-import { speakText, unlockVoice } from "../voiceHelper"
+import { speakText, unlockVoice, stopVoice } from "../voiceHelper"
 
 const recordTranslations = {
   kannada: {
@@ -248,6 +248,9 @@ function Records() {
 
   useEffect(() => {
     fetchAll()
+    return () => {
+      stopVoice()
+    }
   }, [])
 
   const fetchAll = async () => {
@@ -269,7 +272,7 @@ function Records() {
 
   const announceAndAct = (voiceText, action) => {
     unlockVoice()
-    speakText(voiceText)
+    speakText(voiceText, language)
     if (action) setTimeout(action, 800)
   }
 
@@ -401,7 +404,7 @@ function Records() {
                     ))}
                     <button
                       className="speak-btn"
-                      onClick={() => speakText(t.voiceRead + " " + p.speech_text)}
+                      onClick={() => speakText(p.speech_text || (t.voiceRead + " " + p.prescription_text), language, p.audio_base64)}
                     >
                       🔊 {t.readAloud}
                     </button>

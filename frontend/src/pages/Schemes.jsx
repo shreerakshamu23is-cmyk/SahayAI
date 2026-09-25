@@ -1,6 +1,6 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
-import { speakText, unlockVoice } from "../voiceHelper"
+import { speakText, unlockVoice, stopVoice } from "../voiceHelper"
 
 const LANGUAGE_OPTIONS = [
   { value: "english", label: "English" },
@@ -846,6 +846,12 @@ function Schemes() {
   const [selectedState, setSelectedState] = useState(location.state?.selectedState || "karnataka")
   const [language, setLanguage] = useState(location.state?.language || "english")
 
+  useEffect(() => {
+    return () => {
+      stopVoice()
+    }
+  }, [])
+
   const name = location.state?.name || "User"
   const userId = location.state?.userId
   const t = pageText[language] || pageText.english
@@ -872,7 +878,7 @@ function Schemes() {
       getLocalText(scheme, "benefit"),
       scheme.howToApply,
     ].filter(Boolean)
-    speakText(lines.join(". "))
+    speakText(lines.join(". "), language)
   }
 
   const renderCard = (scheme) => {
@@ -952,7 +958,10 @@ function Schemes() {
           </nav>
           <button
             className="back-btn"
-            onClick={() => navigate("/dashboard", { state: { userId, name, language, selectedState } })}
+            onClick={() => {
+              stopVoice()
+              navigate("/dashboard", { state: { userId, name, language, selectedState } })
+            }}
           >
             ← {backLabel}
           </button>

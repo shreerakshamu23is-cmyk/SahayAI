@@ -1,6 +1,6 @@
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
-import { unlockVoice, speakText } from "../voiceHelper"
+import { unlockVoice, speakText, stopVoice } from "../voiceHelper"
 import appTranslations from "../translations"
 
 const styles = `
@@ -108,6 +108,12 @@ function Dashboard() {
   const [videoInfo, setVideoInfo] = useState(null)
   const [voiceStatus, setVoiceStatus] = useState("")
 
+  useEffect(() => {
+    return () => {
+      stopVoice()
+    }
+  }, [])
+
   const langCodes = {
     kannada: "kn-IN",
     hindi: "hi-IN",
@@ -127,7 +133,7 @@ function Dashboard() {
       const data = await response.json()
       setVoiceStatus(`${t.youSaid} ${command}`)
       setReplyText(data.reply)
-      speakText(data.reply)
+      speakText(data.reply, language, data.audio_base64)
 
       if (data.videos && data.videos.length > 0) {
         setVideoInfo(data.videos[0])

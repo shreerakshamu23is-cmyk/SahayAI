@@ -5,7 +5,6 @@ from PIL import Image
 import io
 import json
 import difflib
-import groq as groq_module
 
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 

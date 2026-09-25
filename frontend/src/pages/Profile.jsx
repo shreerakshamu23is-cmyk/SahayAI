@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
-import { speakText, unlockVoice } from "../voiceHelper"
+import { speakText, unlockVoice, stopVoice } from "../voiceHelper"
 import appTranslations from "../translations"
 
 const styles = `
@@ -118,6 +118,9 @@ function Profile() {
 
   useEffect(() => {
     fetchStats()
+    return () => {
+      stopVoice()
+    }
   }, [])
 
   const fetchStats = async () => {
