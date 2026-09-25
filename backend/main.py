@@ -30,6 +30,11 @@ from urllib.request import Request, urlopen
 
 from database import engine, SessionLocal, Base
 from modules.face_auth import User, Prescription, MedicalDocument
+from modules.blockchain import (
+    create_blockchain_block,
+    verify_blockchain_integrity,
+    get_user_blockchain_records
+)
 import shutil
 import uuid
 from modules.face_service import encode_face_from_bytes, encoding_to_bytes, compare_faces
@@ -413,7 +418,8 @@ async def scan_prescription(
         except Exception as e:
             print("Scan prescription Bhashini TTS error:", e)
 
-    # Save prescription to SQLite Database
+    # Save prescription to SQLite Database & Generate Blockchain SHA-256 Ledger Record
+    block_hash = None
     try:
         new_prescription = Prescription(
             user_id=user_id,
@@ -425,8 +431,23 @@ async def scan_prescription(
         db.commit()
         db.refresh(new_prescription)
         prescription_id = new_prescription.id
+
+        # Generate cryptographic blockchain block
+        block = create_blockchain_block(
+            db=db,
+            user_id=user_id,
+            record_type="prescription",
+            payload={
+                "prescription_id": new_prescription.id,
+                "medicines": medicines,
+                "raw_text": raw_text[:100] if raw_text else ""
+            }
+        )
+        new_prescription.block_hash = block.block_hash
+        db.commit()
+        block_hash = block.block_hash
     except Exception as db_err:
-        print("Database save error:", db_err)
+        print("Database/Blockchain save error:", db_err)
         prescription_id = None
 
     return {
@@ -436,7 +457,8 @@ async def scan_prescription(
         "speech_text": speech_text,
         "audio_base64": audio_base64,
         "bhashini_used": bhashini_used,
-        "note": note
+        "note": note,
+        "block_hash": block_hash
     }
 
 @app.post("/upload-document/{user_id}")
@@ -473,11 +495,49 @@ async def upload_document(
     db.commit()
     db.refresh(new_doc)
 
+    # Generate cryptographic blockchain block
+    block_hash = None
+    try:
+        block = create_blockchain_block(
+            db=db,
+            user_id=user_id,
+            record_type="medical_document",
+            payload={
+                "document_id": new_doc.id,
+                "title": title,
+                "document_type": document_type,
+                "file_path": file_path
+            }
+        )
+        new_doc.block_hash = block.block_hash
+        db.commit()
+        block_hash = block.block_hash
+    except Exception as bc_err:
+        print("Blockchain record error:", bc_err)
+
     return {
         "message": "Document uploaded successfully",
         "document_id": new_doc.id,
-        "title": new_doc.title
+        "title": new_doc.title,
+        "block_hash": block_hash
     }
+
+@app.get("/prescriptions/{user_id}")
+def get_prescriptions(user_id: int, db: DBSession = Depends(get_db)):
+    prescriptions = db.query(Prescription).filter(
+        Prescription.user_id == user_id
+    ).order_by(Prescription.scanned_at.desc()).all()
+    return {"prescriptions": [
+        {
+            "id": p.id,
+            "scanned_at": p.scanned_at.strftime("%d %b %Y, %I:%M %p") if p.scanned_at else "Recently",
+            "raw_text": p.raw_text,
+            "medicines": json.loads(p.medicines_json) if p.medicines_json else [],
+            "speech_text": p.speech_text,
+            "block_hash": p.block_hash
+        }
+        for p in prescriptions
+    ]}
 
 @app.get("/documents/{user_id}")
 def get_documents(user_id: int, db: DBSession = Depends(get_db)):
@@ -490,10 +550,28 @@ def get_documents(user_id: int, db: DBSession = Depends(get_db)):
             "title": d.title,
             "description": d.description,
             "document_type": d.document_type,
-            "uploaded_at": d.uploaded_at.strftime("%d %b %Y, %I:%M %p")
+            "uploaded_at": d.uploaded_at.strftime("%d %b %Y, %I:%M %p") if d.uploaded_at else "Recently",
+            "block_hash": d.block_hash
         }
         for d in documents
     ]}
+
+# --- BLOCKCHAIN SECURITY VAULT ENDPOINTS ---
+
+@app.get("/api/blockchain/records/{user_id}")
+def get_blockchain_records(user_id: int, db: DBSession = Depends(get_db)):
+    records = get_user_blockchain_records(db, user_id)
+    verification = verify_blockchain_integrity(db, user_id)
+    return {
+        "verified": verification.get("verified", False),
+        "message": verification.get("message", ""),
+        "total_blocks": len(records),
+        "blocks": records
+    }
+
+@app.get("/api/blockchain/verify/{user_id}")
+def verify_blockchain(user_id: int, db: DBSession = Depends(get_db)):
+    return verify_blockchain_integrity(db, user_id)
 
 @app.get("/medicine-info")
 async def get_medicine_info(medicine: str, language: str = "english"):

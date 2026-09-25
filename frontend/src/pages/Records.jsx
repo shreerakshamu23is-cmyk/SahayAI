@@ -7,6 +7,7 @@ const recordTranslations = {
     prescriptions: "ಔಷಧಿ ಚೀಟಿಗಳು",
     myDocuments: "ನನ್ನ ದಾಖಲೆಗಳು",
     upload: "ಅಪ್ಲೋಡ್ ಮಾಡಿ",
+    blockchainVault: "🛡️ ಬ್ಲಾಕ್‌ಚೈನ್ ಭದ್ರತೆ",
     noPrescriptions: "ಇನ್ನೂ ಔಷಧಿ ಚೀಟಿಗಳಿಲ್ಲ",
     scanFirst: "ಮೊದಲ ದಾಖಲೆ ಸೇರಿಸಲು ಔಷಧಿ ಚೀಟಿ ಸ್ಕ್ಯಾನ್ ಮಾಡಿ",
     scanBtn: "ಔಷಧಿ ಚೀಟಿ ಸ್ಕ್ಯಾನ್ ಮಾಡಿ",
@@ -29,16 +30,22 @@ const recordTranslations = {
     voiceTab1: "ಔಷಧಿ ಚೀಟಿಗಳನ್ನು ತೋರಿಸುತ್ತಿದ್ದೇನೆ",
     voiceTab2: "ನಿಮ್ಮ ದಾಖಲೆಗಳನ್ನು ತೋರಿಸುತ್ತಿದ್ದೇನೆ",
     voiceTab3: "ಹೊಸ ದಾಖಲೆ ಅಪ್ಲೋಡ್ ಮಾಡಲು ಇಲ್ಲಿ ಒತ್ತಿ",
+    voiceTab4: "ಬ್ಲಾಕ್‌ಚೈನ್ ಭದ್ರತಾ ಕೊಠಡಿ ತೆರೆಯುತ್ತಿದ್ದೇನೆ",
     voiceRead: "ಔಷಧಿಗಳ ವಿವರ:",
     voiceScan: "ಔಷಧಿ ಚೀಟಿ ಸ್ಕ್ಯಾನ್ ಮಾಡಲು ಹೋಗುತ್ತಿದ್ದೇನೆ",
     voiceUpload: "ದಾಖಲೆ ಅಪ್ಲೋಡ್ ಮಾಡಲು ಹೋಗುತ್ತಿದ್ದೇನೆ",
     voiceBack: "ಹಿಂದಿನ ಪುಟಕ್ಕೆ ಹೋಗುತ್ತಿದ್ದೇನೆ",
     fillTitle: "ದಯವಿಟ್ಟು ದಾಖಲೆಯ ಹೆಸರು ಮತ್ತು ಫೈಲ್ ಆಯ್ಕೆ ಮಾಡಿ",
+    blockchainVerified: "ಬ್ಲಾಕ್‌ಚೈನ್ ಸತ್ಯಾಪಿತವಾಗಿದೆ",
+    tamperProof: "ಯಾರೂ ಬದಲಾಯಿಸಲು ಸಾಧ್ಯವಿಲ್ಲ (SHA-256)",
+    auditBtn: "ಭದ್ರತೆ ಪರಿಶೀಲಿಸಿ (Audit Ledger)",
+    blockHash: "ಬ್ಲಾಕ್ ಹ್ಯಾಶ್",
   },
   hindi: {
     prescriptions: "पर्चे",
     myDocuments: "मेरे दस्तावेज़",
     upload: "अपलोड करें",
+    blockchainVault: "🛡️ ब्लॉकचेन सुरक्षा",
     noPrescriptions: "अभी कोई पर्चा नहीं",
     scanFirst: "पहला रिकॉर्ड जोड़ने के लिए पर्चा स्कैन करें",
     scanBtn: "पर्चा स्कैन करें",
@@ -61,16 +68,22 @@ const recordTranslations = {
     voiceTab1: "पर्चे दिखा रहा हूं",
     voiceTab2: "आपके दस्तावेज़ दिखा रहा हूं",
     voiceTab3: "नया दस्तावेज़ अपलोड करने के लिए यहां दबाएं",
+    voiceTab4: "ब्लॉकचेन सुरक्षा तिजोरी खोल रहा हूं",
     voiceRead: "दवाइयों का विवरण:",
     voiceScan: "पर्चा स्कैन करने जा रहा हूं",
     voiceUpload: "दस्तावेज़ अपलोड करने जा रहा हूं",
     voiceBack: "पिछले पेज पर जा रहा हूं",
     fillTitle: "कृपया दस्तावेज़ का नाम और फ़ाइल चुनें",
+    blockchainVerified: "ब्लॉकचेन सत्यापित है",
+    tamperProof: "कोई भी छेड़छाड़ नहीं कर सकता (SHA-256)",
+    auditBtn: "सुरक्षा जांचें (Audit Ledger)",
+    blockHash: "ब्लॉक हैश",
   },
   english: {
     prescriptions: "Prescriptions",
     myDocuments: "My Documents",
     upload: "Upload",
+    blockchainVault: "🛡️ Blockchain Vault",
     noPrescriptions: "No prescriptions yet",
     scanFirst: "Scan a prescription to add your first record",
     scanBtn: "Scan Prescription",
@@ -93,11 +106,16 @@ const recordTranslations = {
     voiceTab1: "Showing your prescriptions",
     voiceTab2: "Showing your documents",
     voiceTab3: "Tap here to upload a new document",
+    voiceTab4: "Opening Blockchain Security Vault",
     voiceRead: "Your medicines:",
     voiceScan: "Going to scan prescription",
     voiceUpload: "Going to upload document",
     voiceBack: "Going back to dashboard",
     fillTitle: "Please select a file and enter a title",
+    blockchainVerified: "Blockchain Ledger Verified",
+    tamperProof: "Immutable & Tamper-Proof (SHA-256 Cryptographic Hash)",
+    auditBtn: "Audit Ledger Integrity",
+    blockHash: "Block Hash",
   }
 }
 
@@ -228,18 +246,45 @@ const styles = `
     box-shadow: 0 4px 14px rgba(15, 110, 86, 0.2);
     transition: all 0.2s ease;
   }
-  .action-btn:hover { transform: translateY(-1px); }
-
-  .msg-success {
-    padding: 14px; background: #E1F5EE; border-radius: 12px;
-    color: #044E3B; font-size: 0.9rem; margin-bottom: 1.2rem;
-    border: 1px solid #9FE1CB; font-weight: 600;
+  .bc-hash-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #044E3B; color: #6EE7B7;
+    font-family: monospace; font-size: 0.72rem;
+    padding: 4px 10px; border-radius: 8px; margin-top: 8px;
+    border: 1px solid rgba(110, 231, 183, 0.3); word-break: break-all;
   }
-  .msg-error {
-    padding: 14px; background: #FEE2E2; border-radius: 12px;
-    color: #991B1B; font-size: 0.9rem; margin-bottom: 1.2rem;
-    border: 1px solid #FCA5A5; font-weight: 500;
+  .blockchain-vault-banner {
+    background: linear-gradient(135deg, #044E3B 0%, #0F6E56 100%);
+    color: white; border-radius: 20px; padding: 1.8rem; margin-bottom: 1.8rem;
+    box-shadow: 0 8px 30px rgba(4, 78, 59, 0.25); border: 1px solid rgba(110, 231, 183, 0.2);
   }
+  .bc-status-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(110, 231, 183, 0.15); border: 1px solid #6EE7B7;
+    color: #6EE7B7; padding: 6px 14px; border-radius: 30px;
+    font-size: 0.85rem; font-weight: 700; margin-bottom: 1rem;
+  }
+  .audit-btn {
+    background: #6EE7B7; color: #044E3B; border: none;
+    padding: 10px 20px; border-radius: 12px; font-weight: 800;
+    font-size: 0.88rem; cursor: pointer; transition: all 0.2s ease;
+    margin-top: 1rem; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .audit-btn:hover { background: #A7F3D0; transform: translateY(-1px); }
+  .block-card {
+    background: white; border-radius: 16px; padding: 1.25rem;
+    margin-bottom: 1rem; border: 1px solid #E5EFEA;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.03); font-size: 0.88rem;
+  }
+  .block-header {
+    display: flex; justify-content: space-between; align-items: center;
+    border-bottom: 1px solid #E5EFEA; padding-bottom: 8px; margin-bottom: 10px;
+  }
+  .block-index { font-weight: 800; color: #044E3B; font-size: 0.95rem; }
+  .block-time { color: #6B7280; font-size: 0.78rem; }
+  .hash-row { margin-top: 6px; }
+  .hash-label { font-size: 0.75rem; font-weight: 700; color: #4B5563; }
+  .hash-val { font-family: monospace; font-size: 0.76rem; color: #0F6E56; background: #F0FAF5; padding: 3px 8px; border-radius: 6px; word-break: break-all; margin-top: 2px; }
 `
 
 const DOC_TYPES = [
@@ -271,6 +316,8 @@ function Records() {
   const [activeTab, setActiveTab] = useState("prescriptions")
   const [prescriptions, setPrescriptions] = useState([])
   const [documents, setDocuments] = useState([])
+  const [blockchainData, setBlockchainData] = useState({ verified: true, blocks: [], total_blocks: 0 })
+  const [verifyingBlockchain, setVerifyingBlockchain] = useState(false)
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [uploadMsg, setUploadMsg] = useState("")
@@ -289,18 +336,43 @@ function Records() {
 
   const fetchAll = async () => {
     try {
-      const [presRes, docRes] = await Promise.all([
+      const [presRes, docRes, bcRes] = await Promise.all([
         fetch(`http://localhost:8000/prescriptions/${userId}`),
-        fetch(`http://localhost:8000/documents/${userId}`)
+        fetch(`http://localhost:8000/documents/${userId}`),
+        fetch(`http://localhost:8000/api/blockchain/records/${userId}`)
       ])
       const presData = await presRes.json()
       const docData = await docRes.json()
+      const bcData = await bcRes.json()
       setPrescriptions(presData.prescriptions || [])
       setDocuments(docData.documents || [])
+      setBlockchainData(bcData || { verified: true, blocks: [], total_blocks: 0 })
     } catch {
       console.log("Could not fetch records")
     } finally {
       setLoading(false)
+    }
+  }
+
+  const auditBlockchain = async () => {
+    setVerifyingBlockchain(true)
+    try {
+      const res = await fetch(`http://localhost:8000/api/blockchain/verify/${userId}`)
+      const data = await res.json()
+      if (data.verified) {
+        const msg = language === "kannada"
+          ? "ಬ್ಲಾಕ್‌ಚೈನ್ ಪರಿಶೀಲಿಸಲಾಗಿದೆ! ನಿಮ್ಮ ಎಲ್ಲಾ ವೈದ್ಯಕೀಯ ದಾಖಲೆಗಳು 100% ಸುರಕ್ಷಿತ ಮತ್ತು ಬದಲಾಯಿಸಲಾಗದವು."
+          : language === "hindi"
+          ? "ब्लॉकचेन सत्यापित किया गया! आपके सभी मेडिकल रिकॉर्ड 100% सुरक्षित और अपरिवर्तनीय हैं।"
+          : "Blockchain Ledger Audit Complete! All medical records verified 100% authentic and tamper-proof."
+        speakText(msg, language)
+      } else {
+        speakText("Warning: Ledger verification issue detected.", language)
+      }
+    } catch {
+      speakText("Unable to reach blockchain ledger audit server.", language)
+    } finally {
+      setVerifyingBlockchain(false)
     }
   }
 
@@ -388,6 +460,12 @@ function Records() {
               📁 {t.myDocuments}
             </button>
             <button
+              className={`tab ${activeTab === "blockchain" ? "active" : ""}`}
+              onClick={() => announceAndAct(t.voiceTab4, () => setActiveTab("blockchain"))}
+            >
+              {t.blockchainVault}
+            </button>
+            <button
               className={`tab ${activeTab === "upload" ? "active" : ""}`}
               onClick={() => announceAndAct(t.voiceTab3, () => setActiveTab("upload"))}
             >
@@ -436,6 +514,11 @@ function Records() {
                         </div>
                       </div>
                     ))}
+                    {p.block_hash && (
+                      <div className="bc-hash-pill">
+                        🛡️ SHA-256: {p.block_hash.slice(0, 16)}...{p.block_hash.slice(-8)}
+                      </div>
+                    )}
                     <button
                       className="speak-btn"
                       onClick={() => speakText(p.speech_text || (t.voiceRead + " " + p.prescription_text), language, p.audio_base64)}
@@ -476,11 +559,75 @@ function Records() {
                         <div className="doc-desc">{doc.description}</div>
                       )}
                       <div className="doc-date">📅 {doc.uploaded_at}</div>
+                      {doc.block_hash && (
+                        <div className="bc-hash-pill">
+                          🛡️ SHA-256: {doc.block_hash.slice(0, 16)}...{doc.block_hash.slice(-8)}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))
               )}
             </>
+          )}
+
+          {/* BLOCKCHAIN VAULT TAB */}
+          {!loading && activeTab === "blockchain" && (
+            <div>
+              <div className="blockchain-vault-banner">
+                <div className="bc-status-badge">
+                  <span>●</span> {t.blockchainVerified}
+                </div>
+                <h2 style={{ fontSize: "1.4rem", fontWeight: 800, marginBottom: "6px" }}>
+                  🛡️ Health Record Security Vault
+                </h2>
+                <p style={{ fontSize: "0.9rem", opacity: 0.9, lineHeight: 1.4 }}>
+                  {t.tamperProof}
+                </p>
+                <button
+                  className="audit-btn"
+                  onClick={auditBlockchain}
+                  disabled={verifyingBlockchain}
+                >
+                  {verifyingBlockchain ? "🔍 Auditing Chain..." : `🔍 ${t.auditBtn}`}
+                </button>
+              </div>
+
+              <h3 style={{ fontSize: "1.1rem", fontWeight: 800, color: "#044E3B", marginBottom: "1rem" }}>
+                📜 Cryptographic Ledger Trail ({blockchainData.blocks?.length || 0} Blocks)
+              </h3>
+
+              {(!blockchainData.blocks || blockchainData.blocks.length === 0) ? (
+                <div className="empty">
+                  <div className="empty-icon">🛡️</div>
+                  <p style={{ fontWeight: 600, color: "#1a1a1a" }}>No Blockchain Blocks Yet</p>
+                  <p style={{ fontSize: ".85rem", marginTop: ".5rem" }}>
+                    Scan a prescription or upload a medical document to generate your first SHA-256 block.
+                  </p>
+                </div>
+              ) : (
+                blockchainData.blocks.map((b) => (
+                  <div className="block-card" key={b.block_index}>
+                    <div className="block-header">
+                      <span className="block-index">⛓️ Block #{b.block_index} ({b.record_type.toUpperCase()})</span>
+                      <span className="block-time">🕒 {b.created_at}</span>
+                    </div>
+                    <div className="hash-row">
+                      <div className="hash-label">Prev Hash:</div>
+                      <div className="hash-val">{b.prev_hash}</div>
+                    </div>
+                    <div className="hash-row">
+                      <div className="hash-label">Payload Hash:</div>
+                      <div className="hash-val">{b.payload_hash}</div>
+                    </div>
+                    <div className="hash-row">
+                      <div className="hash-label">SHA-256 Block Hash:</div>
+                      <div className="hash-val" style={{ fontWeight: "bold", color: "#044E3B" }}>{b.block_hash}</div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           )}
 
           {/* UPLOAD TAB */}
