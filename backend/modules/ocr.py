@@ -31,34 +31,46 @@ logger = logging.getLogger("ocr_module")
 class MedicineItem(BaseModel):
     name: str = Field(
         ...,
-        description="Brand or generic name of the medicine (e.g. 'Amoxicillin'). If handwriting is difficult, provide the most likely medication based on pharmacological context."
+        description="Brand or generic name of the medicine (e.g. 'Metformin', 'Glimepiride', 'Telmisartan', 'Atorvastatin', 'Ecosprin AV')."
     )
     dosage: str = Field(
         ...,
-        description="Dose amount and formulation (e.g. '500 mg capsule'). Never leave blank; provide the visible or standard clinical dosage."
+        description="Dose amount and formulation (e.g. '500 mg tablet', '75 mg capsule/tablet'). Never leave blank."
     )
     frequency: str = Field(
         ...,
-        description="How often to take the medication translated into plain English (e.g. 'Twice daily after meals'). Never leave blank."
+        description="Daily timing schedule in plain English. CRITICAL: Interpret shorthand notation precisely: '1-0-1' is 'Twice daily (Morning & Evening)', '0-0-1' is 'Once daily at night' (NIGHT ONLY, never morning!), '1-0-0' is 'Once daily in morning', '0-1-0' is 'Once daily in afternoon', '1-1-1' is 'Three times daily (Morning, Afternoon & Night)'."
     )
     duration: str = Field(
         ...,
-        description="Duration of treatment (e.g. '7 days (complete entire course)', 'As needed'). Never leave blank; indicate standard duration if not explicitly written."
+        description="Duration of treatment (e.g. '30 days', '7 days'). Never leave blank."
     )
     instructions: str = Field(
         ...,
-        description="Special usage directions and practical patient precautions (e.g. 'Take with meals and plenty of water'). Never leave blank."
+        description="Exact handwritten timing and meal instructions written on the prescription (e.g. 'After food', 'At night', 'Before food', 'With meals'). Do not use generic boilerplate text if handwritten instructions exist."
     )
 
 
 class PrescriptionAnalysis(BaseModel):
+    is_prescription: bool = Field(
+        default=True,
+        description="Set to true if the uploaded photo is a valid doctor's prescription, pharmacy bill, or medical treatment slip containing medications. Set to false if the photo is NOT a medical prescription or medicine bill (e.g., photo of a vehicle, animal, food, scenery, selfie, non-medical document, or random object)."
+    )
     summary: str = Field(
         ...,
-        description="A plain-language, non-medical one-paragraph summary of what the prescription contains, what it is typically prescribed for, and how the patient should take them."
+        description="A plain-language, non-medical one-paragraph summary of what the prescription contains, what it is prescribed for, and how the patient should take them."
     )
     medicines: List[MedicineItem] = Field(
         default_factory=list,
-        description="List of identified medications and their schedules"
+        description="List of identified medications and their detailed schedules"
+    )
+    lifestyle_advice: Optional[str] = Field(
+        default="",
+        description="Handwritten diet, exercise, and lifestyle recommendations on the prescription (e.g. 'Diet: Low salt, Low Sugar', 'Exercise: 30 min daily'). Leave empty if none."
+    )
+    doctor_notes: Optional[str] = Field(
+        default="",
+        description="Additional doctor advice or follow-up instructions (e.g. 'Advice: Regular BP & Sugar checkup', 'Follow up after 1 month'). Leave empty if none."
     )
     disclaimer: str = Field(
         default="This is an AI-assisted reading aid, not medical advice. Always confirm your prescription with your doctor or pharmacist before taking any medication.",
@@ -68,27 +80,39 @@ class PrescriptionAnalysis(BaseModel):
 
 PRESCRIPTION_PROMPT = """
 You are an expert clinical pharmacist and advanced medical transcription specialist.
-Analyze this doctor's prescription image (handwritten, cursive, or printed) and thoroughly extract and explain all medication information so a patient can clearly and fully understand their treatment.
+Analyze this image (handwritten prescription, printed medical slip, or pharmacy bill).
+
+IMAGE VALIDATION (IMPORTANT):
+1. Check if the uploaded image is actually a doctor's prescription, pharmacy invoice/bill, or medical treatment document containing medications.
+2. If the photo is NOT a medical prescription or medicine bill (e.g. photo of a car, animal, person/selfie, food, landscape, non-medical receipt, or random object), set 'is_prescription': false, leave 'medicines' empty, and provide a polite warning summary: "This photo does not appear to be a medical prescription or medicine bill. Please upload a clear photo of a valid doctor's prescription."
+
+TIMING & DOSAGE RULES (CRITICAL):
+- If dosage schedule, timing, or frequency IS NOT written on the document (for example, on a pharmacy purchase bill or invoice where only item names and quantities are listed), DO NOT make up or guess arbitrary times like Morning or Night!
+  In this case, set frequency to "Take as per doctor's suggestion" and instructions to "Take medicine as per doctor's suggestion / prescription".
+- If medical timing notation IS written:
+  - '1-0-1' means Morning (1 tab) and Evening/Night (1 tab) -> frequency: "Twice daily (Morning & Evening)".
+  - '0-0-1' means NIGHT ONLY (0 morning, 0 afternoon, 1 night/bedtime) -> frequency: "Once daily at night". NEVER classify '0-0-1' as Morning!
+  - '1-0-0' means MORNING ONLY -> frequency: "Once daily in morning".
+  - '0-1-0' means AFTERNOON ONLY -> frequency: "Once daily in afternoon".
+  - '1-1-1' means Three times daily (Morning, Afternoon & Night).
 
 CRITICAL INSTRUCTIONS:
-1. INTELLIGENT CLINICAL ANALYSIS (DO NOT LEAVE BLANKS):
-   - Never leave any field empty, blank, or merely "unclear".
-   - Thoroughly decipher the handwriting. Even if handwriting is messy, rushed, partially faint, or cursive, use your extensive pharmacological knowledge, common prescription patterns, brand/generic drug naming, and medical context (diagnosis, clinical notes, doctor specialty) to deduce the intended medications.
-   - If a specific detail (such as dosage, exact duration, or frequency) is abbreviated or partially obscured on the prescription slip, analyze standard medical guidelines and typical prescribing regimens for that specific drug and condition to provide the most likely, recommended information (e.g. "500 mg (typical standard dose)", "Twice daily after meals", "7 days (standard antibiotic course; confirm with pharmacist)").
+1. INTELLIGENT CLINICAL ANALYSIS:
+   - Decipher all medicine brand or generic names carefully (e.g. "Acetech-P", "Montnac LC", "Strength Me L Plus", "Metformin").
+   - Extract strength/dosage if present. If timing is missing, set frequency/instructions to "Take as per doctor's suggestion".
 
-2. FOR EACH PRESCRIBED MEDICATION, EXTRACT:
-   - name: The brand or generic medicine name (e.g., "Amoxicillin", "Ibuprofen").
-   - dosage: Strength and formulation (e.g., "500 mg capsule", "10 ml syrup"). Provide the deduced standard strength if handwriting is faint.
-   - frequency: Clear schedule in plain English (e.g., "Three times daily (every 8 hours)", "Once daily at bedtime"). Explain medical shorthand like 'tid', 'bid', 'od', 'prn'.
-   - duration: How long to take the medicine (e.g., "7 days (finish full course)", "14 days", "As needed for pain"). If not explicitly written, provide the typical clinical duration.
-   - instructions: Clear, practical patient instructions (e.g., "Take after food with plenty of water", "Take 30 minutes before breakfast", "Avoid alcohol while taking this medicine").
+2. FOR EACH PRESCRIBED / BILLED MEDICATION, EXTRACT:
+   - name: Brand or generic name.
+   - dosage: Strength & form if visible (e.g. "Tablet").
+   - frequency: Exact schedule if written. If NOT written, set to "Take as per doctor's suggestion".
+   - duration: Duration if written. If NOT written, set to "As per doctor's advice".
+   - instructions: Meal & timing directions if written. If NOT written, set to "Take medicine as per doctor's suggestion".
 
-3. PATIENT-FRIENDLY ONE-PARAGRAPH SUMMARY:
-   - Provide a warm, reassuring, plain-language one-paragraph summary in simple everyday language.
-   - Explain what condition these medications are likely treating together, how the patient should organize their daily routine, and important general precautions.
+3. LIFESTYLE & FOLLOW-UP ADVICE:
+   - Extract any Diet, Exercise, Advice, or Follow Up notes if present. Put these into 'lifestyle_advice' and 'doctor_notes'.
 
 4. STRUCTURED OUTPUT:
-   - Return strictly valid JSON adhering to the specified schema with 'summary', 'medicines', and 'disclaimer'.
+   - Return strictly valid JSON adhering to the specified schema with 'is_prescription', 'summary', 'medicines', 'lifestyle_advice', 'doctor_notes', and 'disclaimer'.
 """
 
 
@@ -231,11 +255,20 @@ def analyze_prescription_with_gemini(image_bytes: bytes, api_key: str) -> Dict[s
     if not parsed_json:
         raise last_err or RuntimeError("Gemini model analysis failed.")
 
+    is_rx = parsed_json.get("is_prescription", True)
     summary = parsed_json.get("summary", "")
     med_items = parsed_json.get("medicines", [])
+    lifestyle_advice = parsed_json.get("lifestyle_advice", "")
+    doctor_notes = parsed_json.get("doctor_notes", "")
     disclaimer = parsed_json.get("disclaimer", "")
 
-    # Map Sanjay's schema to SahayAI frontend expectation ({medicine, dose, frequency, duration})
+    if not is_rx:
+        return {
+            "error": "⚠️ This photo does not appear to be a medical prescription or medicine bill. Please upload a clear photo of a valid prescription or medicine bill.",
+            "is_prescription": False
+        }
+
+    # Map schema to SahayAI frontend expectation ({medicine, dose, frequency, duration, instructions})
     medicines = []
     for item in med_items:
         medicines.append({
@@ -247,13 +280,18 @@ def analyze_prescription_with_gemini(image_bytes: bytes, api_key: str) -> Dict[s
         })
 
     raw_text = summary
+    if lifestyle_advice:
+        raw_text += f"\n\nLifestyle Advice: {lifestyle_advice}"
+    if doctor_notes:
+        raw_text += f"\n\nDoctor Notes: {doctor_notes}"
     if disclaimer:
         raw_text += f"\n\nDisclaimer: {disclaimer}"
 
     return {
         "raw_text": raw_text,
         "medicines": medicines,
-        "note": "Analyzed using Gemini Vision AI"
+        "lifestyle_advice": lifestyle_advice,
+        "doctor_notes": doctor_notes
     }
 
 
@@ -492,15 +530,19 @@ def medicines_to_speech(medicines, language="english"):
         dose = med.get("dose", "")
         frequency = med.get("frequency", "")
         duration = med.get("duration", "")
+        instructions = med.get("instructions", "")
 
         if language == "hindi":
             text = f"{name} {dose} lein, {frequency}"
+            if instructions: text += f", {instructions}"
             if duration: text += f", {duration} tak"
         elif language == "kannada":
             text = f"{name} {dose} tegédukoli, {frequency}"
+            if instructions: text += f", {instructions}"
             if duration: text += f", {duration} varegu"
         else:
             text = f"Take {name} {dose}, {frequency}"
+            if instructions: text += f", {instructions}"
             if duration: text += f", for {duration}"
 
         speech_parts.append(text)

@@ -39,11 +39,39 @@ import shutil
 import uuid
 from modules.face_service import encode_face_from_bytes, encoding_to_bytes, compare_faces
 
+from fastapi.staticfiles import StaticFiles
+
 load_dotenv()
 
 Base.metadata.create_all(bind=engine)
 
+def _ensure_schema_migrations():
+    import sqlite3
+    try:
+        db_path = os.path.join(os.path.dirname(__file__), "sahayai.db")
+        if os.path.exists(db_path):
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            for table in ["medical_documents", "prescriptions"]:
+                try:
+                    cursor.execute(f"ALTER TABLE {table} ADD COLUMN block_hash TEXT;")
+                except Exception:
+                    pass
+            try:
+                cursor.execute("ALTER TABLE prescriptions ADD COLUMN image_path TEXT;")
+            except Exception:
+                pass
+            conn.commit()
+            conn.close()
+    except Exception as e:
+        print("Schema migration info:", e)
+
+_ensure_schema_migrations()
+
+os.makedirs("uploads", exist_ok=True)
+
 app = FastAPI()
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 app.add_middleware(
     CORSMiddleware,
@@ -245,8 +273,8 @@ async def voice_assistant(
         f"You are SahayAI, a direct healthcare voice assistant for {name}. "
         f"You MUST strictly reply in the user's preferred language: {language}. "
         f"Provide direct answers only, with no filler words. "
-        f"If the user asks to navigate or open prescriptions, medical records, user profile, or logout, "
-        f"include NAVIGATE:prescription, NAVIGATE:records, NAVIGATE:profile, or NAVIGATE:logout in your reply."
+        f"If the user asks to navigate or open prescriptions, medical records, government health schemes, user profile, or logout, "
+        f"include NAVIGATE:prescription, NAVIGATE:records, NAVIGATE:schemes, NAVIGATE:profile, or NAVIGATE:logout in your reply."
     )
 
     reply_final = ""
@@ -282,6 +310,9 @@ async def voice_assistant(
     elif "NAVIGATE:records" in reply_final:
         navigate_to = "records"
         reply_final = reply_final.replace("NAVIGATE:records", "").strip()
+    elif "NAVIGATE:schemes" in reply_final:
+        navigate_to = "schemes"
+        reply_final = reply_final.replace("NAVIGATE:schemes", "").strip()
     elif "NAVIGATE:profile" in reply_final:
         navigate_to = "profile"
         reply_final = reply_final.replace("NAVIGATE:profile", "").strip()
@@ -296,6 +327,8 @@ async def voice_assistant(
             navigate_to = "prescription"
         elif any(k in msg_lower for k in ["record", "report", "history", "dakhalegalu", "dastavez", "file"]):
             navigate_to = "records"
+        elif any(k in msg_lower for k in ["scheme", "yojana", "yojane", "jan aushadhi", "ayushman", "government"]):
+            navigate_to = "schemes"
         elif any(k in msg_lower for k in ["profile", "account", "details", "khata"]):
             navigate_to = "profile"
         elif any(k in msg_lower for k in ["logout", "exit", "bye"]):
@@ -307,6 +340,8 @@ async def voice_assistant(
             reply_final = "Opening your prescription scanner."
         elif navigate_to == "records":
             reply_final = "Opening your medical records."
+        elif navigate_to == "schemes":
+            reply_final = "Opening government health schemes."
         elif navigate_to == "profile":
             reply_final = "Opening your profile."
         elif navigate_to == "logout":
@@ -418,6 +453,18 @@ async def scan_prescription(
         except Exception as e:
             print("Scan prescription Bhashini TTS error:", e)
 
+    # Save prescription image file to uploads
+    rx_file_path = None
+    try:
+        upload_dir = "uploads"
+        os.makedirs(upload_dir, exist_ok=True)
+        rx_filename = f"rx_{uuid.uuid4().hex[:12]}.jpg"
+        rx_file_path = os.path.join(upload_dir, rx_filename)
+        with open(rx_file_path, "wb") as f:
+            f.write(image_bytes)
+    except Exception as save_err:
+        print("Save prescription image error:", save_err)
+
     # Save prescription to SQLite Database & Generate Blockchain SHA-256 Ledger Record
     block_hash = None
     try:
@@ -426,6 +473,7 @@ async def scan_prescription(
             raw_text=raw_text,
             medicines_json=json.dumps(medicines),
             speech_text=speech_text,
+            image_path=rx_file_path,
         )
         db.add(new_prescription)
         db.commit()
@@ -437,6 +485,7 @@ async def scan_prescription(
             db=db,
             user_id=user_id,
             record_type="prescription",
+            record_id=new_prescription.id,
             payload={
                 "prescription_id": new_prescription.id,
                 "medicines": medicines,
@@ -458,6 +507,7 @@ async def scan_prescription(
         "audio_base64": audio_base64,
         "bhashini_used": bhashini_used,
         "note": note,
+        "image_path": rx_file_path,
         "block_hash": block_hash
     }
 
@@ -502,6 +552,7 @@ async def upload_document(
             db=db,
             user_id=user_id,
             record_type="medical_document",
+            record_id=new_doc.id,
             payload={
                 "document_id": new_doc.id,
                 "title": title,
@@ -534,6 +585,7 @@ def get_prescriptions(user_id: int, db: DBSession = Depends(get_db)):
             "raw_text": p.raw_text,
             "medicines": json.loads(p.medicines_json) if p.medicines_json else [],
             "speech_text": p.speech_text,
+            "image_path": getattr(p, "image_path", None),
             "block_hash": p.block_hash
         }
         for p in prescriptions
@@ -550,6 +602,7 @@ def get_documents(user_id: int, db: DBSession = Depends(get_db)):
             "title": d.title,
             "description": d.description,
             "document_type": d.document_type,
+            "file_path": d.file_path,
             "uploaded_at": d.uploaded_at.strftime("%d %b %Y, %I:%M %p") if d.uploaded_at else "Recently",
             "block_hash": d.block_hash
         }

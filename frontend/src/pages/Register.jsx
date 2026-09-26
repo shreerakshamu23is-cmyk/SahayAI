@@ -108,6 +108,8 @@ function Register() {
       } else {
         setMessage(data.message)
         setMsgType("success")
+        localStorage.setItem("userId", data.user_id)
+        localStorage.setItem("userName", data.name)
         setTimeout(() => {
           navigate("/register-face", {
             state: { userId: data.user_id, name: data.name }

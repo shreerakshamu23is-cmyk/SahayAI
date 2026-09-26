@@ -173,7 +173,6 @@ function Prescription() {
   const [result, setResult] = useState(null)
   const [error, setError] = useState("")
   const [mode, setMode] = useState("options")
-  const [reminderSet, setReminderSet] = useState(false)
   const [medDescriptions, setMedDescriptions] = useState({})
 
   const [tabletPhoto, setTabletPhoto] = useState(null)
@@ -334,7 +333,6 @@ function Prescription() {
     setPhoto(null)
     setResult(null)
     setError("")
-    setReminderSet(false)
     setMode("options")
   }
 
@@ -345,64 +343,17 @@ function Prescription() {
     setTabletMode("options")
   }
 
-  const setupReminders = async (medicines) => {
-    if (!("Notification" in window)) {
-      alert("Your browser does not support notifications")
-      return
-    }
-    const permission = await Notification.requestPermission()
-    if (permission !== "granted") {
-      alert("Please allow notifications to set reminders")
-      return
-    }
-
-    medicines.forEach((med, i) => {
-      const times = []
-      const t1 = document.getElementById(`reminder-${i}`)?.value
-      if (t1) times.push(t1)
-      const t2 = document.getElementById(`reminder2-${i}`)?.value
-      if (t2) times.push(t2)
-      const t3 = document.getElementById(`reminder3-${i}`)?.value
-      if (t3) times.push(t3)
-      const t4 = document.getElementById(`reminder4-${i}`)?.value
-      if (t4) times.push(t4)
-
-      times.forEach(timeStr => {
-        const [hours, minutes] = timeStr.split(":").map(Number)
-        const scheduleNext = () => {
-          const now = new Date()
-          const target = new Date()
-          target.setHours(hours, minutes, 0, 0)
-          if (target <= now) target.setDate(target.getDate() + 1)
-          const delay = target.getTime() - now.getTime()
-          const hrs = target.getHours()
-          const mins = target.getMinutes().toString().padStart(2, "0")
-          const ampm = hrs >= 12 ? "PM" : "AM"
-          const displayHr = hrs % 12 || 12
-          const timeDisplay = `${displayHr}:${mins} ${ampm}`
-          setTimeout(() => {
-            new Notification("SahayAI Medicine Reminder 💊", {
-              body: `Time to take ${med.medicine} ${med.dose || ""} — ${timeDisplay}`,
-              icon: "/vite.svg",
-              requireInteraction: true
-            })
-            speakHelper(`Time to take ${med.medicine} ${med.dose || ""}`)
-            scheduleNext()
-          }, delay)
-        }
-        scheduleNext()
-      })
-    })
-    setReminderSet(true)
-  }
-
   const getFrequencyTimes = (frequency) => {
-    if (!frequency) return "once"
+    if (!frequency) return "as_advised"
     const f = frequency.toLowerCase()
-    if (f.includes("twice") || f.includes("two") || f.includes("2 time")) return "twice"
-    if (f.includes("three") || f.includes("thrice") || f.includes("3 time")) return "three"
-    if (f.includes("four") || f.includes("4 time")) return "four"
-    return "once"
+    if (f.includes("doctor") || f.includes("suggestion") || f.includes("advice") || f.includes("as per") || f.includes("not specified") || f.includes("unspecified")) return "as_advised"
+    if (f.includes("twice") || f.includes("two") || f.includes("2 time") || f.includes("1-0-1") || f.includes("bid") || f.includes("bd")) return "twice"
+    if (f.includes("three") || f.includes("thrice") || f.includes("3 time") || f.includes("1-1-1") || f.includes("tid") || f.includes("tds")) return "three"
+    if (f.includes("four") || f.includes("4 time") || f.includes("qid")) return "four"
+    if (f.includes("night") || f.includes("bedtime") || f.includes("0-0-1") || f.includes("evening")) return "night"
+    if (f.includes("afternoon") || f.includes("0-1-0")) return "afternoon"
+    if (f.includes("morning") || f.includes("1-0-0") || f.includes("once")) return "once"
+    return "as_advised"
   }
 
   return (
@@ -596,12 +547,15 @@ function Prescription() {
                   result.medicines.map((med, i) => {
                     const freq = getFrequencyTimes(med.frequency)
                     const timeIcons = {
-                      once:  [{ icon: "🌅", label: t.morning }],
-                      twice: [{ icon: "🌅", label: t.morning }, { icon: "🌙", label: t.evening }],
-                      three: [{ icon: "🌅", label: t.morning }, { icon: "☀️", label: t.afternoon }, { icon: "🌙", label: t.evening }],
-                      four:  [{ icon: "🌅", label: t.morning }, { icon: "☀️", label: t.afternoon }, { icon: "🌆", label: t.evening }, { icon: "🌙", label: t.night }],
+                      once:       [{ icon: "🌅", label: t.morning }],
+                      afternoon:  [{ icon: "☀️", label: t.afternoon }],
+                      night:      [{ icon: "🌙", label: t.night || "Night" }],
+                      twice:      [{ icon: "🌅", label: t.morning }, { icon: "🌙", label: t.evening }],
+                      three:      [{ icon: "🌅", label: t.morning }, { icon: "☀️", label: t.afternoon }, { icon: "🌙", label: t.evening }],
+                      four:       [{ icon: "🌅", label: t.morning }, { icon: "☀️", label: t.afternoon }, { icon: "🌆", label: t.evening }, { icon: "🌙", label: t.night }],
+                      as_advised: [{ icon: "🩺", label: t.asAdvised || "As per Doctor" }],
                     }
-                    const icons = timeIcons[freq] || timeIcons["once"]
+                    const icons = timeIcons[freq] || timeIcons["as_advised"]
 
                     return (
                       <div key={i} className="med-card">
@@ -626,6 +580,21 @@ function Prescription() {
                             </div>
                           ))}
                         </div>
+                        {med.instructions && (
+                          <div style={{
+                            fontSize: "0.78rem",
+                            color: "#0F6E56",
+                            fontWeight: "600",
+                            marginTop: "8px",
+                            background: "#E1F5EE",
+                            padding: "4px 10px",
+                            borderRadius: "8px",
+                            display: "inline-block",
+                            border: "1px solid #9FE1CB"
+                          }}>
+                            🍽️ {med.instructions}
+                          </div>
+                        )}
                         {med.duration && (
                           <div className="med-duration">📅 {med.duration}</div>
                         )}
@@ -638,6 +607,30 @@ function Prescription() {
                   </div>
                 )}
               </div>
+
+              {(result.lifestyle_advice || result.doctor_notes) && (
+                <div style={{
+                  background: "#F0FAF5",
+                  borderRadius: "14px",
+                  padding: "1rem 1.25rem",
+                  border: "1px solid #D1EBE1",
+                  marginBottom: "1rem"
+                }}>
+                  <div style={{ fontWeight: "800", color: "#044E3B", fontSize: "0.98rem", marginBottom: "0.5rem" }}>
+                    📋 Doctor's Advice & Lifestyle Guidance
+                  </div>
+                  {result.lifestyle_advice && (
+                    <div style={{ fontSize: "0.85rem", color: "#0F6E56", marginBottom: "0.4rem", lineHeight: "1.4" }}>
+                      <strong>🥗 Diet & Exercise:</strong> {result.lifestyle_advice}
+                    </div>
+                  )}
+                  {result.doctor_notes && (
+                    <div style={{ fontSize: "0.85rem", color: "#0F6E56", lineHeight: "1.4" }}>
+                      <strong>👨‍⚕️ Advice & Follow-up:</strong> {result.doctor_notes}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <button className="btn-dark" onClick={() => speakHelper(result.speech_text, language, result.audio_base64)}>
                 🔊 {t.readAloud}

@@ -20,6 +20,7 @@ class Prescription(Base):
     raw_text = Column(Text, nullable=True)
     medicines_json = Column(Text, nullable=True)
     speech_text = Column(Text, nullable=True)
+    image_path = Column(String, nullable=True)
     block_hash = Column(String, nullable=True)
     scanned_at = Column(DateTime, default=datetime.now)
 

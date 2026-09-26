@@ -307,9 +307,15 @@ function Records() {
   const navigate = useNavigate()
   const fileRef = useRef(null)
 
-  const name = location.state?.name || "User"
-  const language = location.state?.language || "english"
-  const userId = location.state?.userId
+  const name = location.state?.name || localStorage.getItem("userName") || "User"
+  const language = location.state?.language || localStorage.getItem("userLanguage") || "english"
+  const userId = location.state?.userId || localStorage.getItem("userId") || 1
+
+  useEffect(() => {
+    if (location.state?.userId) localStorage.setItem("userId", location.state.userId)
+    if (location.state?.name) localStorage.setItem("userName", location.state.name)
+    if (location.state?.language) localStorage.setItem("userLanguage", location.state.language)
+  }, [location.state])
 
   const t = recordTranslations[language] || recordTranslations["english"]
 
@@ -326,29 +332,31 @@ function Records() {
   const [docDesc, setDocDesc] = useState("")
   const [docType, setDocType] = useState("other")
   const [selectedFile, setSelectedFile] = useState(null)
+  const [previewModal, setPreviewModal] = useState(null)
 
   useEffect(() => {
     fetchAll()
     return () => {
       stopVoice()
     }
-  }, [])
+  }, [userId])
 
   const fetchAll = async () => {
+    const activeUserId = userId || localStorage.getItem("userId") || 1
     try {
       const [presRes, docRes, bcRes] = await Promise.all([
-        fetch(`http://localhost:8000/prescriptions/${userId}`),
-        fetch(`http://localhost:8000/documents/${userId}`),
-        fetch(`http://localhost:8000/api/blockchain/records/${userId}`)
+        fetch(`http://localhost:8000/prescriptions/${activeUserId}`),
+        fetch(`http://localhost:8000/documents/${activeUserId}`),
+        fetch(`http://localhost:8000/api/blockchain/records/${activeUserId}`)
       ])
-      const presData = await presRes.json()
-      const docData = await docRes.json()
-      const bcData = await bcRes.json()
+      const presData = presRes.ok ? await presRes.json() : {}
+      const docData = docRes.ok ? await docRes.json() : {}
+      const bcData = bcRes.ok ? await bcRes.json() : {}
       setPrescriptions(presData.prescriptions || [])
       setDocuments(docData.documents || [])
       setBlockchainData(bcData || { verified: true, blocks: [], total_blocks: 0 })
-    } catch {
-      console.log("Could not fetch records")
+    } catch (err) {
+      console.log("Could not fetch records:", err)
     } finally {
       setLoading(false)
     }
@@ -356,15 +364,16 @@ function Records() {
 
   const auditBlockchain = async () => {
     setVerifyingBlockchain(true)
+    const activeUserId = userId || localStorage.getItem("userId") || 1
     try {
-      const res = await fetch(`http://localhost:8000/api/blockchain/verify/${userId}`)
+      const res = await fetch(`http://localhost:8000/api/blockchain/verify/${activeUserId}`)
       const data = await res.json()
       if (data.verified) {
         const msg = language === "kannada"
           ? "ಬ್ಲಾಕ್‌ಚೈನ್ ಪರಿಶೀಲಿಸಲಾಗಿದೆ! ನಿಮ್ಮ ಎಲ್ಲಾ ವೈದ್ಯಕೀಯ ದಾಖಲೆಗಳು 100% ಸುರಕ್ಷಿತ ಮತ್ತು ಬದಲಾಯಿಸಲಾಗದವು."
           : language === "hindi"
-          ? "ब्लॉकचेन सत्यापित किया गया! आपके सभी मेडिकल रिकॉर्ड 100% सुरक्षित और अपरिवर्तनीय हैं।"
-          : "Blockchain Ledger Audit Complete! All medical records verified 100% authentic and tamper-proof."
+            ? "ब्लॉकचेन सत्यापित किया गया! आपके सभी मेडिकल रिकॉर्ड 100% सुरक्षित और अपरिवर्तनीय हैं।"
+            : "Blockchain Ledger Audit Complete! All medical records verified 100% authentic and tamper-proof."
         speakText(msg, language)
       } else {
         speakText("Warning: Ledger verification issue detected.", language)
@@ -398,13 +407,23 @@ function Records() {
     setUploadMsg("")
 
     try {
+      const activeUserId = userId || localStorage.getItem("userId") || 1
       const formData = new FormData()
       formData.append("file", selectedFile)
 
       const response = await fetch(
-        `http://localhost:8000/upload-document/${userId}?title=${encodeURIComponent(docTitle)}&description=${encodeURIComponent(docDesc)}&document_type=${docType}`,
+        `http://localhost:8000/upload-document/${activeUserId}?title=${encodeURIComponent(docTitle)}&description=${encodeURIComponent(docDesc)}&document_type=${docType}`,
         { method: "POST", body: formData }
       )
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        const errMsg = errorData.error || errorData.detail?.[0]?.msg || `Upload error (Server HTTP ${response.status})`
+        setUploadMsg(errMsg)
+        setUploadMsgType("error")
+        return
+      }
+
       const data = await response.json()
 
       if (data.error) {
@@ -420,8 +439,9 @@ function Records() {
         setSelectedFile(null)
         fetchAll()
       }
-    } catch {
-      setUploadMsg("Could not connect to server")
+    } catch (err) {
+      console.error("uploadDocument error:", err)
+      setUploadMsg("Could not connect to server. Please ensure backend server is running.")
       setUploadMsgType("error")
     } finally {
       setUploading(false)
@@ -510,10 +530,38 @@ function Records() {
                         <div className="med-detail">
                           {med.dose && `${med.dose} · `}
                           {med.frequency && `${med.frequency}`}
+                          {med.instructions && ` (${med.instructions})`}
                           {med.duration && ` · ${med.duration}`}
                         </div>
                       </div>
                     ))}
+                    {p.image_path && (
+                      <button
+                        onClick={() => {
+                          const cleanPath = p.image_path.replace(/\\/g, '/')
+                          const url = `http://localhost:8000/${cleanPath}`
+                          const isPdf = cleanPath.toLowerCase().endsWith(".pdf")
+                          setPreviewModal({ url, title: `Prescription Paper (${p.scanned_at})`, isPdf })
+                        }}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "6px",
+                          marginTop: "6px",
+                          marginBottom: "8px",
+                          padding: "7px 14px",
+                          background: "#FFFFFF",
+                          color: "#0F6E56",
+                          border: "1.5px solid #0F6E56",
+                          borderRadius: "10px",
+                          fontSize: "0.82rem",
+                          fontWeight: "700",
+                          cursor: "pointer"
+                        }}
+                      >
+                        🖼️ View Original Prescription Paper
+                      </button>
+                    )}
                     {p.block_hash && (
                       <div className="bc-hash-pill">
                         🛡️ SHA-256: {p.block_hash.slice(0, 16)}...{p.block_hash.slice(-8)}
@@ -559,6 +607,34 @@ function Records() {
                         <div className="doc-desc">{doc.description}</div>
                       )}
                       <div className="doc-date">📅 {doc.uploaded_at}</div>
+                      {doc.file_path && (
+                        <button
+                          onClick={() => {
+                            const cleanPath = doc.file_path.replace(/\\/g, '/')
+                            const url = `http://localhost:8000/${cleanPath}`
+                            const isPdf = cleanPath.toLowerCase().endsWith(".pdf")
+                            setPreviewModal({ url, title: doc.title, isPdf })
+                          }}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "6px",
+                            marginTop: "8px",
+                            marginBottom: "8px",
+                            padding: "8px 16px",
+                            background: "linear-gradient(135deg, #0F6E56 0%, #085041 100%)",
+                            color: "white",
+                            border: "none",
+                            borderRadius: "10px",
+                            fontSize: "0.85rem",
+                            fontWeight: "700",
+                            cursor: "pointer",
+                            boxShadow: "0 2px 8px rgba(15, 110, 86, 0.2)"
+                          }}
+                        >
+                          👁️ View / Open Document
+                        </button>
+                      )}
                       {doc.block_hash && (
                         <div className="bc-hash-pill">
                           🛡️ SHA-256: {doc.block_hash.slice(0, 16)}...{doc.block_hash.slice(-8)}
@@ -699,6 +775,117 @@ function Records() {
 
         </div>
       </div>
+
+      {/* Fullscreen Document & Prescription Viewer Modal */}
+      {previewModal && (
+        <div style={{
+          position: "fixed",
+          top: 0, left: 0, right: 0, bottom: 0,
+          background: "rgba(0,0,0,0.8)",
+          zIndex: 9999,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "1rem"
+        }}>
+          <div style={{
+            background: "white",
+            borderRadius: "20px",
+            maxWidth: "920px",
+            width: "100%",
+            maxHeight: "92vh",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            boxShadow: "0 25px 50px rgba(0,0,0,0.4)"
+          }}>
+            <div style={{
+              background: "linear-gradient(135deg, #044E3B 0%, #0F6E56 100%)",
+              color: "white",
+              padding: "1rem 1.5rem",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between"
+            }}>
+              <div style={{ fontWeight: 800, fontSize: "1.1rem" }}>
+                📄 {previewModal.title || "Medical Document Viewer"}
+              </div>
+              <button
+                onClick={() => setPreviewModal(null)}
+                style={{
+                  background: "rgba(255,255,255,0.2)",
+                  border: "none",
+                  color: "white",
+                  fontSize: "1.2rem",
+                  fontWeight: 800,
+                  borderRadius: "50%",
+                  width: "36px",
+                  height: "36px",
+                  cursor: "pointer"
+                }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ flex: 1, overflow: "auto", padding: "1rem", background: "#f8fafc", textAlign: "center" }}>
+              {previewModal.isPdf ? (
+                <iframe
+                  src={previewModal.url}
+                  title={previewModal.title}
+                  style={{ width: "100%", height: "70vh", border: "none", borderRadius: "12px" }}
+                />
+              ) : (
+                <img
+                  src={previewModal.url}
+                  alt={previewModal.title}
+                  style={{ maxWidth: "100%", maxHeight: "70vh", objectFit: "contain", borderRadius: "12px" }}
+                />
+              )}
+            </div>
+
+            <div style={{
+              padding: "1rem 1.5rem",
+              background: "white",
+              borderTop: "1px solid #E5EFEA",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center"
+            }}>
+              <a
+                href={previewModal.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  padding: "8px 18px",
+                  background: "#0F6E56",
+                  color: "white",
+                  borderRadius: "10px",
+                  textDecoration: "none",
+                  fontWeight: 700,
+                  fontSize: "0.88rem"
+                }}
+              >
+                🌐 Open Fullscreen / New Tab
+              </a>
+              <button
+                onClick={() => setPreviewModal(null)}
+                style={{
+                  padding: "8px 18px",
+                  background: "#374151",
+                  color: "white",
+                  border: "none",
+                  borderRadius: "10px",
+                  fontWeight: 700,
+                  cursor: "pointer"
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   )
 }

@@ -178,6 +178,9 @@ function LoginFace() {
         setLoggedInUser(data)
         setMsgType("success")
         speakGreeting(data.name, data.language)
+        localStorage.setItem("userId", data.user_id)
+        localStorage.setItem("userName", data.name)
+        localStorage.setItem("userLanguage", data.language)
         setTimeout(() => {
           navigate("/dashboard", {
             state: {

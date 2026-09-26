@@ -406,9 +406,16 @@ function Dashboard() {
   const recognitionRef = useRef(null)
   const synthRef = useRef(window.speechSynthesis)
 
-  const name = location.state?.name || "User"
-  const language = location.state?.language || "english"
-  const userId = location.state?.userId
+  const name = location.state?.name || localStorage.getItem("userName") || "User"
+  const language = location.state?.language || localStorage.getItem("userLanguage") || "english"
+  const userId = location.state?.userId || localStorage.getItem("userId") || 1
+
+  useEffect(() => {
+    if (location.state?.userId) localStorage.setItem("userId", location.state.userId)
+    if (location.state?.name) localStorage.setItem("userName", location.state.name)
+    if (location.state?.language) localStorage.setItem("userLanguage", location.state.language)
+  }, [location.state])
+
   const t = appTranslations[language] || appTranslations["english"]
 
   const [listening, setListening] = useState(false)
@@ -543,8 +550,8 @@ function Dashboard() {
                   <span className="prompt-chip" onClick={() => handleCommand("Show medical records")}>
                     📋 {language === "kannada" ? "ದಾಖಲೆಗಳನ್ನು ನೋಡಿ" : language === "hindi" ? "रिकॉर्ड्स देखें" : "Medical records"}
                   </span>
-                  <span className="prompt-chip" onClick={() => handleCommand("Home remedy for headache")}>
-                    🤕 {language === "kannada" ? "ತಲೆನೋವಿಗೆ ಮನೆಮದ್ದು" : language === "hindi" ? "सिरदर्द घरेलू उपाय" : "Remedy for headache"}
+                  <span className="prompt-chip" onClick={() => handleCommand("Open government schemes")}>
+                    🏛️ {language === "kannada" ? "ಆರೋಗ್ಯ ಯೋಜನೆಗಳು" : language === "hindi" ? "स्वास्थ्य योजनाएं" : "Health schemes"}
                   </span>
                 </div>
               </div>

@@ -59,6 +59,7 @@ const appTranslations = {
     afternoon: "ಮಧ್ಯಾಹ್ನ",
     evening: "ಸಂಜೆ",
     night: "ರಾತ್ರಿ",
+    asAdvised: "ವೈದ್ಯರ ಸಲಹೆಯಂತೆ",
     reminderNotif: "ಔಷಧಿ ತೆಗೆದುಕೊಳ್ಳಿ",
 
     // Profile
@@ -162,6 +163,7 @@ const appTranslations = {
     afternoon: "दोपहर",
     evening: "शाम",
     night: "रात",
+    asAdvised: "डॉक्टर के परामर्श अनुसार",
     reminderNotif: "दवाई लेने का समय",
     profileTitle: "मेरी प्रोफाइल",
     userId: "उपयोगकर्ता ID",
@@ -264,6 +266,7 @@ const appTranslations = {
     afternoon: "Afternoon",
     evening: "Evening",
     night: "Night",
+    asAdvised: "As per Doctor's Advice",
     reminderNotif: "Time to take medicine",
     scanPrescriptionPanel: "📋 Scan Prescription",
     identifyTabletPanel: "🔍 Identify Tablet",

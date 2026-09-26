@@ -15,8 +15,8 @@ def create_blockchain_block(
     db: Session,
     user_id: int,
     record_type: str,
-    record_id: int,
-    payload: Dict[str, Any]
+    payload: Dict[str, Any],
+    record_id: int = 0
 ) -> BlockchainRecord:
     """
     Creates an append-only SHA-256 cryptographic block for medical record verification
