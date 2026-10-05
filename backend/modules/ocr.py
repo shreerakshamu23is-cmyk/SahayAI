@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 import pytesseract
 import cv2
 import numpy as np
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 # Cache client instances to avoid repeated connection setups
 _client_cache = {}
@@ -25,6 +26,10 @@ def get_genai_client(api_key: str):
 
 # Setup logger
 logger = logging.getLogger("ocr_module")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    logger.addHandler(logging.StreamHandler())
+logger.propagate = False
 
 # --- Pydantic Data Models (Sanjay's Prescription Reader Schema) ---
 
@@ -200,57 +205,49 @@ def analyze_prescription_with_gemini(image_bytes: bytes, api_key: str) -> Dict[s
 
     client = get_genai_client(api_key)
 
-    candidate_models = [
-        "gemini-flash-lite-latest",
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite-preview",
-        "gemini-3-flash-preview",
-        "gemini-2.5-flash",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash"
-    ]
+    candidate_models = ["gemini-flash-lite-latest", "gemini-3.8-flash"]
 
     parsed_json = None
     last_err = None
 
-    for attempt in range(2):
-        for model_name in candidate_models:
-            try:
-                logger.info(f"Attempting prescription analysis with model: {model_name} (pass {attempt + 1})")
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=[
-                        types.Part.from_bytes(data=processed_bytes, mime_type=content_type),
-                        PRESCRIPTION_PROMPT
-                    ],
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=PrescriptionAnalysis,
-                        temperature=0.1,
-                        max_output_tokens=2048
-                    )
+    for model_name in candidate_models:
+        try:
+            logger.info("Attempting prescription analysis with model: %s", model_name)
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[
+                    types.Part.from_bytes(data=processed_bytes, mime_type=content_type),
+                    PRESCRIPTION_PROMPT
+                ],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=PrescriptionAnalysis,
+                    temperature=0.1,
+                    max_output_tokens=2048
                 )
-                if response and response.text:
-                    raw_resp = response.text.strip()
-                    if raw_resp.startswith("```json"):
-                        raw_resp = raw_resp[7:]
-                    elif raw_resp.startswith("```"):
-                        raw_resp = raw_resp[3:]
-                    if raw_resp.endswith("```"):
-                        raw_resp = raw_resp[:-3]
-                    
-                    parsed_json = json.loads(raw_resp.strip())
-                    logger.info(f"Successfully analyzed prescription using {model_name}")
-                    break
-            except Exception as m_err:
-                last_err = m_err
-                logger.warning(f"Model {model_name} error: {m_err}")
-                continue
+            )
+            if response and response.text:
+                raw_resp = response.text.strip()
+                if raw_resp.startswith("```json"):
+                    raw_resp = raw_resp[7:]
+                elif raw_resp.startswith("```"):
+                    raw_resp = raw_resp[3:]
+                if raw_resp.endswith("```"):
+                    raw_resp = raw_resp[:-3]
 
-        if parsed_json:
-            break
-        if attempt == 0:
-            time.sleep(2)
+                parsed_json = json.loads(raw_resp.strip())
+                logger.info("Successfully analyzed prescription using %s", model_name)
+                break
+        except Exception as m_err:
+            last_err = m_err
+            logger.warning("Model %s error: %s", model_name, m_err)
+            error_text = str(m_err).upper()
+            if any(marker in error_text for marker in ("429", "RESOURCE_EXHAUSTED", "PERMISSION_DENIED", "UNAUTHENTICATED", "API_KEY_INVALID")):
+                logger.warning("Gemini request cannot succeed with another model; using local OCR fallback")
+                break
+
+    if not parsed_json:
+        logger.info("Gemini model attempts exhausted; using local OCR fallback")
 
     if not parsed_json:
         raise last_err or RuntimeError("Gemini model analysis failed.")
@@ -396,37 +393,45 @@ OCR_CONFIGS = ['--oem 3 --psm 6', '--oem 3 --psm 11']
 
 
 def preprocess_image(image_bytes):
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-    img_array = np.array(image)
-    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-    gray = cv2.resize(gray, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-    denoised = cv2.fastNlMeansDenoising(gray, h=10)
-    kernel = np.array([[-1,-1,-1],
-                       [-1, 9,-1],
-                       [-1,-1,-1]])
-    sharpened = cv2.filter2D(denoised, -1, kernel)
-    _, thresh = cv2.threshold(sharpened, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return thresh
+    with Image.open(io.BytesIO(image_bytes)) as image:
+        gray = np.asarray(image.convert("L"))
+    gray = _limit_ocr_image_size(gray)
+    return _enhance_ocr_image(gray)
+
+
+def _limit_ocr_image_size(gray, max_dimension=1800):
+    height, width = gray.shape[:2]
+    largest_dimension = max(height, width)
+    if largest_dimension > max_dimension:
+        scale = max_dimension / float(largest_dimension)
+        gray = cv2.resize(
+            gray,
+            (max(1, round(width * scale)), max(1, round(height * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+    return gray
+
+
+def _enhance_ocr_image(gray):
+    equalized = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8)).apply(gray)
+    _, thresholded = cv2.threshold(
+        equalized, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+    return thresholded
 
 
 def extract_text_from_image(image_bytes):
+    total_started = time.perf_counter()
+    preprocessing_seconds = 0.0
+    tesseract_seconds = 0.0
+    text_processing_seconds = 0.0
+    tesseract_calls = 0
     try:
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        img_np = np.array(image)
-        gray = cv2.cvtColor(img_np, cv2.COLOR_RGB2GRAY)
-
-        if max(gray.shape) > 1800:
-            scale = 1800 / float(max(gray.shape))
-            gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-
-        base = preprocess_image(image_bytes)
-        clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-        equalized = clahe.apply(gray)
-        bilateral = cv2.bilateralFilter(equalized, d=7, sigmaColor=35, sigmaSpace=35)
-        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-        closed = cv2.morphologyEx(bilateral, cv2.MORPH_CLOSE, kernel)
-
-        variants = [gray, base, closed]
+        preprocessing_started = time.perf_counter()
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            gray = np.asarray(image.convert("L"))
+        gray = _limit_ocr_image_size(gray)
+        preprocessing_seconds = time.perf_counter() - preprocessing_started
 
         def score_ocr_text(text):
             if not text: return -999.0
@@ -440,26 +445,55 @@ def extract_text_from_image(image_bytes):
 
         best_text = ''
         best_score = -9999.0
-        for var in variants:
-            for cfg in OCR_CONFIGS:
-                try:
-                    text = pytesseract.image_to_string(var, lang='eng', config=cfg)
-                except Exception:
-                    continue
-                text = text.replace('\x0c', ' ').strip()
-                text = fix_medical_abbreviations(text)
-                sc = score_ocr_text(text)
-                if sc > best_score:
-                    best_score = sc
+
+        # Sparse-text mode gave the best result on prescription samples while
+        # avoiding five other Tesseract subprocesses on the normal path.
+        try:
+            tesseract_started = time.perf_counter()
+            text = pytesseract.image_to_string(gray, lang='eng', config='--oem 3 --psm 11')
+            tesseract_seconds += time.perf_counter() - tesseract_started
+            tesseract_calls += 1
+            text_processing_started = time.perf_counter()
+            best_text = fix_medical_abbreviations(text.replace('\x0c', ' ').strip())
+            best_score = score_ocr_text(best_text)
+            text_processing_seconds += time.perf_counter() - text_processing_started
+        except Exception as e:
+            logger.warning("Primary Tesseract pass failed: %s", e)
+
+        # Keep an accuracy-oriented fallback for faint/low-confidence scans;
+        # only build the enhanced image and launch Tesseract when needed.
+        if best_score < 40:
+            try:
+                preprocessing_started = time.perf_counter()
+                enhanced = _enhance_ocr_image(gray)
+                preprocessing_seconds += time.perf_counter() - preprocessing_started
+                tesseract_started = time.perf_counter()
+                text = pytesseract.image_to_string(
+                    enhanced, lang='eng', config='--oem 3 --psm 6'
+                )
+                tesseract_seconds += time.perf_counter() - tesseract_started
+                tesseract_calls += 1
+                text_processing_started = time.perf_counter()
+                text = fix_medical_abbreviations(text.replace('\x0c', ' ').strip())
+                candidate_score = score_ocr_text(text)
+                text_processing_seconds += time.perf_counter() - text_processing_started
+                if candidate_score > best_score:
                     best_text = text
+            except Exception as e:
+                logger.warning("Fallback Tesseract pass failed: %s", e)
 
-        if not best_text:
-            text = pytesseract.image_to_string(gray, lang='eng', config=OCR_CONFIGS[0])
-            best_text = fix_medical_abbreviations(text.replace('\x0c',' ').strip())
-
+        logger.info("[Prescription] Image processing: %.0f ms", preprocessing_seconds * 1000)
+        logger.info("[Prescription] OCR: %.0f ms calls=%d language=eng", tesseract_seconds * 1000, tesseract_calls)
+        logger.info("[Prescription] Text processing: %.0f ms", text_processing_seconds * 1000)
+        logger.info(
+            "[Prescription] OCR total: %.0f ms image=%dx%d",
+            (time.perf_counter() - total_started) * 1000,
+            gray.shape[1],
+            gray.shape[0],
+        )
         return best_text.strip() if best_text else None
     except Exception as e:
-        print(f"OCR error: {e}")
+        logger.exception("OCR failed after %.3fs", time.perf_counter() - total_started)
         return None
 
 
@@ -521,33 +555,163 @@ def extract_medicines_locally(raw_text):
 
 
 def medicines_to_speech(medicines, language="english"):
+    """
+    Create speech text in the selected language.
+
+    Medicine names and dosage values are kept as-is because they are
+    medical names/numbers. The surrounding instructions are translated
+    into the selected language.
+    """
+
+    language = str(language or "english").strip().lower()
+
+    # Normalize language names
+    if language in ("kn", "kn-in", "kannada"):
+        language = "kannada"
+    elif language in ("hi", "hi-in", "hindi"):
+        language = "hindi"
+    else:
+        language = "english"
+
     if not medicines:
-        return "No medicines found in the prescription."
+        if language == "kannada":
+            return "ಔಷಧಿ ಚೀಟಿಯಲ್ಲಿ ಯಾವುದೇ ಔಷಧಿಗಳು ಕಂಡುಬಂದಿಲ್ಲ."
+        elif language == "hindi":
+            return "पर्चे में कोई दवाई नहीं मिली।"
+        else:
+            return "No medicines found in the prescription."
 
     speech_parts = []
+
     for med in medicines:
-        name = med.get("medicine", "Unknown medicine")
-        dose = med.get("dose", "")
-        frequency = med.get("frequency", "")
-        duration = med.get("duration", "")
-        instructions = med.get("instructions", "")
+        name = str(med.get("medicine", "") or "").strip()
+        dose = str(med.get("dose", "") or "").strip()
+        frequency = str(med.get("frequency", "") or "").strip()
+        duration = str(med.get("duration", "") or "").strip()
+        instructions = str(med.get("instructions", "") or "").strip()
 
-        if language == "hindi":
-            text = f"{name} {dose} lein, {frequency}"
-            if instructions: text += f", {instructions}"
-            if duration: text += f", {duration} tak"
-        elif language == "kannada":
-            text = f"{name} {dose} tegédukoli, {frequency}"
-            if instructions: text += f", {instructions}"
-            if duration: text += f", {duration} varegu"
+        # ---------------- KANNADA ----------------
+        if language == "kannada":
+
+            text = f"{name}"
+
+            if dose:
+                text += f" {dose}"
+
+            # Convert common English frequency values to Kannada
+            freq_lower = frequency.lower()
+
+            if "twice daily" in freq_lower:
+                text += " ಅನ್ನು ದಿನಕ್ಕೆ ಎರಡು ಬಾರಿ ತೆಗೆದುಕೊಳ್ಳಿ"
+            elif "three times daily" in freq_lower:
+                text += " ಅನ್ನು ದಿನಕ್ಕೆ ಮೂರು ಬಾರಿ ತೆಗೆದುಕೊಳ್ಳಿ"
+            elif "four times daily" in freq_lower:
+                text += " ಅನ್ನು ದಿನಕ್ಕೆ ನಾಲ್ಕು ಬಾರಿ ತೆಗೆದುಕೊಳ್ಳಿ"
+            elif "once daily" in freq_lower:
+                text += " ಅನ್ನು ದಿನಕ್ಕೆ ಒಂದು ಬಾರಿ ತೆಗೆದುಕೊಳ್ಳಿ"
+            elif "morning" in freq_lower and "evening" in freq_lower:
+                text += " ಅನ್ನು ಬೆಳಿಗ್ಗೆ ಮತ್ತು ಸಂಜೆ ತೆಗೆದುಕೊಳ್ಳಿ"
+            elif "morning" in freq_lower:
+                text += " ಅನ್ನು ಬೆಳಿಗ್ಗೆ ತೆಗೆದುಕೊಳ್ಳಿ"
+            elif "afternoon" in freq_lower:
+                text += " ಅನ್ನು ಮಧ್ಯಾಹ್ನ ತೆಗೆದುಕೊಳ್ಳಿ"
+            elif "night" in freq_lower or "bedtime" in freq_lower:
+                text += " ಅನ್ನು ರಾತ್ರಿ ತೆಗೆದುಕೊಳ್ಳಿ"
+            elif "as needed" in freq_lower:
+                text += " ಅನ್ನು ಅಗತ್ಯವಿದ್ದಾಗ ತೆಗೆದುಕೊಳ್ಳಿ"
+            elif frequency:
+                text += f" {frequency} ಸಮಯದಲ್ಲಿ ತೆಗೆದುಕೊಳ್ಳಿ"
+            else:
+                text += " ಅನ್ನು ವೈದ್ಯರ ಸಲಹೆಯಂತೆ ತೆಗೆದುಕೊಳ್ಳಿ"
+
+            # Instructions
+            inst_lower = instructions.lower()
+
+            if "after food" in inst_lower:
+                text += " ಊಟದ ನಂತರ"
+            elif "before food" in inst_lower:
+                text += " ಊಟಕ್ಕೆ ಮೊದಲು"
+            elif "with food" in inst_lower or "with meals" in inst_lower:
+                text += " ಊಟದೊಂದಿಗೆ"
+
+            # Duration
+            if duration:
+                text += f", {duration} ವರೆಗೆ"
+
+        # ---------------- HINDI ----------------
+        elif language == "hindi":
+
+            text = f"{name}"
+
+            if dose:
+                text += f" {dose}"
+
+            freq_lower = frequency.lower()
+
+            if "twice daily" in freq_lower:
+                text += " दिन में दो बार लें"
+            elif "three times daily" in freq_lower:
+                text += " दिन में तीन बार लें"
+            elif "four times daily" in freq_lower:
+                text += " दिन में चार बार लें"
+            elif "once daily" in freq_lower:
+                text += " दिन में एक बार लें"
+            elif "morning" in freq_lower and "evening" in freq_lower:
+                text += " सुबह और शाम लें"
+            elif "morning" in freq_lower:
+                text += " सुबह लें"
+            elif "afternoon" in freq_lower:
+                text += " दोपहर में लें"
+            elif "night" in freq_lower or "bedtime" in freq_lower:
+                text += " रात में लें"
+            elif "as needed" in freq_lower:
+                text += " जरूरत के अनुसार लें"
+            elif frequency:
+                text += f" {frequency} लें"
+            else:
+                text += " डॉक्टर की सलाह के अनुसार लें"
+
+            inst_lower = instructions.lower()
+
+            if "after food" in inst_lower:
+                text += " भोजन के बाद"
+            elif "before food" in inst_lower:
+                text += " भोजन से पहले"
+            elif "with food" in inst_lower or "with meals" in inst_lower:
+                text += " भोजन के साथ"
+
+            if duration:
+                text += f", {duration} तक"
+
+        # ---------------- ENGLISH ----------------
         else:
-            text = f"Take {name} {dose}, {frequency}"
-            if instructions: text += f", {instructions}"
-            if duration: text += f", for {duration}"
 
-        speech_parts.append(text)
+            text = f"Take {name}"
 
-    return ". Next medicine: ".join(speech_parts)
+            if dose:
+                text += f" {dose}"
+
+            if frequency:
+                text += f", {frequency}"
+            else:
+                text += ", as advised by the doctor"
+
+            if instructions:
+                text += f", {instructions}"
+
+            if duration:
+                text += f", for {duration}"
+
+        speech_parts.append(text.strip())
+
+    # Natural pause between medicines
+    if language == "kannada":
+        return ". ಮುಂದಿನ ಔಷಧಿ: ".join(speech_parts) + "."
+
+    elif language == "hindi":
+        return ". अगली दवाई: ".join(speech_parts) + "."
+
+    return ". Next medicine: ".join(speech_parts) + "."
 
 
 DRUG_LIST = [
@@ -558,8 +722,8 @@ DRUG_LIST = [
 
 NORMALIZATION_MAP = {
     "beta10e": "Betaloc", "betaloe": "Betaloc", "betaloc": "Betaloc",
-    "dorzolamidua": "Dorzolamide", "dorzolamidu": "Dorzolamide", "dorzolamidum": "Dorzolamide",
-    "oxpre10l": "Oxprenolol", "oxprelol": "Oxprenolol", "calpol": "Calpol"
+    "dorzolamidua": "Dorzolamide", "dorzolamidu": "Dorzolamide", "dorzolamidum": "Dorzolamidum",
+    "oxpre10l": "Oxprenolol", "oxprelol": "Oxprelol", "calpol": "Calpol"
 }
 
 def normalize_medicine_name(raw_name, min_ratio=0.6):

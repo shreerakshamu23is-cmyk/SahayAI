@@ -385,10 +385,10 @@ function Records() {
     }
   }
 
-  const announceAndAct = (voiceText, action) => {
+  const announceAndAct = async (voiceText, action) => {
     unlockVoice()
-    speakText(voiceText, language)
-    if (action) setTimeout(action, 800)
+    const playbackResult = await speakText(voiceText, language)
+    if (playbackResult !== "cancelled") action?.()
   }
 
   const handleFileSelect = (e) => {

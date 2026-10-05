@@ -21,3 +21,5 @@ frontend/build/
 .DS_Store
 Thumbs.db
 .vscode/
+
+backend/test_*.mp3

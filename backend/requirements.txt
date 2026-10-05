@@ -6,3 +6,4 @@ pillow
 pytesseract
 opencv-python
 sqlalchemy
+gTTS

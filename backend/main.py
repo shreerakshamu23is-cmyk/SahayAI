@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from sqlalchemy.orm import Session as DBSession
 from pydantic import BaseModel
 import json
+import logging
 from modules.ocr import (
     analyze_prescription,
     identify_tablet_image,
@@ -40,8 +41,14 @@ import uuid
 from modules.face_service import encode_face_from_bytes, encoding_to_bytes, compare_faces
 
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 load_dotenv()
+logger = logging.getLogger("sahayai.api")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    logger.addHandler(logging.StreamHandler())
+logger.propagate = False
 
 Base.metadata.create_all(bind=engine)
 
@@ -113,6 +120,10 @@ class BhashiniASRRequest(BaseModel):
     audio_base64: str
     language: str = "kannada"
 
+class PrescriptionTranslateRequest(BaseModel):
+    language: str
+    source: dict
+
 @app.get("/api/bhashini/status")
 def get_bhashini_status():
     return {
@@ -130,12 +141,16 @@ def api_bhashini_translate(req: BhashiniTranslateRequest):
 
 @app.post("/api/bhashini/tts")
 def api_bhashini_tts(req: BhashiniTTSRequest):
+    tts_started = time.perf_counter()
     audio_b64 = bhashini_tts(req.text, req.language, req.gender)
+    generation_ms = round((time.perf_counter() - tts_started) * 1000)
+    logger.info("[TTS] Generation: %d ms language=%s", generation_ms, req.language)
     return {
         "text": req.text,
         "language": req.language,
         "audio_base64": audio_b64,
-        "has_audio": audio_b64 is not None
+        "has_audio": audio_b64 is not None,
+        "generation_ms": generation_ms,
     }
 
 @app.post("/api/bhashini/asr")
@@ -336,26 +351,45 @@ async def voice_assistant(
 
     # Fallback reply generation if LLM is unavailable or returned empty string
     if not reply_final:
-        if navigate_to == "prescription":
-            reply_final = "Opening your prescription scanner."
-        elif navigate_to == "records":
-            reply_final = "Opening your medical records."
-        elif navigate_to == "schemes":
-            reply_final = "Opening government health schemes."
-        elif navigate_to == "profile":
-            reply_final = "Opening your profile."
-        elif navigate_to == "logout":
-            reply_final = "Logging out."
-        else:
-            reply_final = f"Hello {name}, how can I help you today?"
+        fallback_key = navigate_to or "greeting"
+        fallback_replies = {
+            "english": {
+                "prescription": "Opening your prescription scanner.",
+                "records": "Opening your medical records.",
+                "schemes": "Opening government health schemes.",
+                "profile": "Opening your profile.",
+                "logout": "Logging out.",
+                "greeting": f"Hello {name}, how can I help you today?",
+            },
+            "kannada": {
+                "prescription": "ನಿಮ್ಮ ಔಷಧಿ ಚೀಟಿ ಸ್ಕ್ಯಾನರ್ ತೆರೆಯುತ್ತಿದೆ.",
+                "records": "ನಿಮ್ಮ ವೈದ್ಯಕೀಯ ದಾಖಲೆಗಳನ್ನು ತೆರೆಯುತ್ತಿದೆ.",
+                "schemes": "ಸರ್ಕಾರಿ ಆರೋಗ್ಯ ಯೋಜನೆಗಳನ್ನು ತೆರೆಯುತ್ತಿದೆ.",
+                "profile": "ನಿಮ್ಮ ಪ್ರೊಫೈಲ್ ತೆರೆಯುತ್ತಿದೆ.",
+                "logout": "ಲಾಗ್‌ಔಟ್ ಆಗುತ್ತಿದೆ.",
+                "greeting": f"ನಮಸ್ಕಾರ {name}, ಇಂದು ನಾನು ನಿಮಗೆ ಹೇಗೆ ಸಹಾಯ ಮಾಡಬಹುದು?",
+            },
+            "hindi": {
+                "prescription": "आपका पर्चा स्कैनर खोला जा रहा है।",
+                "records": "आपके मेडिकल रिकॉर्ड खोले जा रहे हैं।",
+                "schemes": "सरकारी स्वास्थ्य योजनाएं खोली जा रही हैं।",
+                "profile": "आपकी प्रोफाइल खोली जा रही है।",
+                "logout": "लॉगआउट हो रहा है।",
+                "greeting": f"नमस्ते {name}, आज मैं आपकी कैसे सहायता कर सकता हूँ?",
+            },
+        }
+        reply_english = fallback_replies["english"][fallback_key]
+        reply_final = reply_english
 
         if target_lang not in {"en", "english"}:
             try:
                 translated_reply = bhashini_translate(reply_final, target_lang=target_lang, source_lang="english")
-                if translated_reply:
+                if translated_reply and translated_reply != reply_english:
                     reply_final = translated_reply
             except Exception:
                 pass
+            if reply_final == reply_english:
+                reply_final = fallback_replies.get(target_lang, fallback_replies["english"])[fallback_key]
 
     # Check for YouTube remedy video intent
     videos = []
@@ -381,16 +415,10 @@ async def voice_assistant(
             videos = [video_info]
             video_search_url = video_info.get("search_url")
 
-    # Generate Bhashini TTS Audio
+    # Generate TTS asynchronously in the client after returning the response.
+    # This prevents network TTS/gTTS latency from delaying the chatbot text.
     audio_base64 = None
     bhashini_used = False
-    try:
-        if is_bhashini_available():
-            audio_base64 = bhashini_tts(reply_final, lang=target_lang)
-            bhashini_used = True
-    except Exception as e:
-        print("[Voice Assistant Bhashini TTS Error]:", e)
-
     return {
         "reply": reply_final,
         "navigate_to": navigate_to,
@@ -402,58 +430,237 @@ async def voice_assistant(
 
 
 # --- PRESCRIPTION OCR ENDPOINTS ---
+def localize_prescription_text(text, language, allow_remote=True):
+    if not text:
+        return text
+
+    lang = (language or "english").lower()
+    lang = {"kn": "kannada", "hi": "hindi", "en": "english"}.get(lang, lang)
+    
+    if lang in {"en", "english"}:
+        return text
+
+    translations = {
+        "kannada": {
+            "This is an AI-assisted reading aid, not medical advice. Always confirm your prescription with your doctor or pharmacist before taking any medication.": "ಇದು AI ಸಹಾಯದ ಓದುವ ಸಾಧನ ಮಾತ್ರ, ವೈದ್ಯಕೀಯ ಸಲಹೆಯಲ್ಲ. ಯಾವುದೇ ಔಷಧಿ ತೆಗೆದುಕೊಳ್ಳುವ ಮೊದಲು ನಿಮ್ಮ ವೈದ್ಯರು ಅಥವಾ ಔಷಧಿಕಾರರೊಂದಿಗೆ ಖಚಿತಪಡಿಸಿಕೊಳ್ಳಿ.",
+            "This photo does not appear to be a medical prescription or medicine bill. Please upload a clear photo of a valid doctor's prescription.": "ಈ ಚಿತ್ರವು ವೈದ್ಯಕೀಯ ಔಷಧಿ ಚೀಟಿ ಅಥವಾ ಔಷಧಿ ಬಿಲ್‌ನಂತೆ ಕಾಣುತ್ತಿಲ್ಲ. ದಯವಿಟ್ಟು ಮಾನ್ಯವಾದ ವೈದ್ಯರ ಔಷಧಿ ಚೀಟಿಯ ಸ್ಪಷ್ಟ ಚಿತ್ರವನ್ನು ಅಪ್ಲೋಡ್ ಮಾಡಿ.",
+            "is commonly used as prescribed by doctor for health condition management.": "ಆರೋಗ್ಯ ಸಮಸ್ಯೆಗಳ ನಿರ್ವಹಣೆಗೆ ವೈದ್ಯರ ಸೂಚನೆಯಂತೆ ಸಾಮಾನ್ಯವಾಗಿ ಬಳಸಲಾಗುತ್ತದೆ.",
+            "Diet:": "ಆಹಾರ:", "Exercise:": "ವ್ಯಾಯಾಮ:", "Advice:": "ಸಲಹೆ:",
+            "Doctor Notes:": "ವೈದ್ಯರ ಟಿಪ್ಪಣಿಗಳು:", "Lifestyle Advice:": "ಜೀವನಶೈಲಿ ಸಲಹೆ:",
+            "Disclaimer:": "ಹಕ್ಕುತ್ಯಾಗ:", "Follow up after": "ನಂತರ ಮರುಪರಿಶೀಲನೆ ಮಾಡಿ",
+            "regular": "ನಿಯಮಿತವಾಗಿ", "daily": "ದಿನನಿತ್ಯ", "min": "ನಿಮಿಷ",
+            "please follow a low salt diet and walk daily.": "ದಯವಿಟ್ಟು ಕಡಿಮೆ ಉಪ್ಪಿನ ಆಹಾರವನ್ನು ಸೇವಿಸಿ ಮತ್ತು ಪ್ರತಿದಿನ ನಡೆಯಿರಿ.",
+            "follow a low-salt diet and exercise regularly.": "ಕಡಿಮೆ ಉಪ್ಪಿನ ಆಹಾರ ಸೇವಿಸಿ ಮತ್ತು ನಿಯಮಿತವಾಗಿ ವ್ಯಾಯಾಮ ಮಾಡಿ.",
+            "drink plenty of water and get enough rest.": "ಹೆಚ್ಚು ನೀರು ಕುಡಿಯಿರಿ ಮತ್ತು ಸಾಕಷ್ಟು ವಿಶ್ರಾಂತಿ ಪಡೆಯಿರಿ.",
+            "monitor blood pressure and blood sugar regularly.": "ರಕ್ತದೊತ್ತಡ ಮತ್ತು ರಕ್ತದಲ್ಲಿನ ಸಕ್ಕರೆಯನ್ನು ನಿಯಮಿತವಾಗಿ ಪರಿಶೀಲಿಸಿ.",
+            "Please": "ದಯವಿಟ್ಟು", "follow": "ಪಾಲಿಸಿ", "salt": "ಉಪ್ಪು", "diet": "ಆಹಾರ",
+            "exercise": "ವ್ಯಾಯಾಮ", "walk": "ನಡೆಯಿರಿ", "walking": "ನಡೆಯುವುದು", "daily": "ಪ್ರತಿದಿನ",
+            "drink": "ಕುಡಿಯಿರಿ", "water": "ನೀರು", "rest": "ವಿಶ್ರಾಂತಿ", "avoid": "ತಪ್ಪಿಸಿ",
+            "consult": "ಸಂಪರ್ಕಿಸಿ", "doctor": "ವೈದ್ಯರು", "medicine": "ಔಷಧಿ", "medicines": "ಔಷಧಿಗಳು",
+            "prescription": "ಔಷಧಿ ಚೀಟಿ", "take": "ತೆಗೆದುಕೊಳ್ಳಿ", "after": "ನಂತರ", "before": "ಮೊದಲು",
+            "food": "ಆಹಾರ", "meals": "ಊಟ", "with": "ಜೊತೆಗೆ", "for": "ಗಾಗಿ", "regularly": "ನಿಯಮಿತವಾಗಿ",
+            "and": "ಮತ್ತು", "blood pressure": "ರಕ್ತದೊತ್ತಡ", "blood sugar": "ರಕ್ತದಲ್ಲಿನ ಸಕ್ಕರೆ",
+            "Twice daily (Morning & Evening)": "ದಿನಕ್ಕೆ ಎರಡು ಬಾರಿ (ಬೆಳಿಗ್ಗೆ ಮತ್ತು ಸಂಜೆ)",
+            "Three times daily (Morning, Afternoon & Night)": "ದಿನಕ್ಕೆ ಮೂರು ಬಾರಿ (ಬೆಳಿಗ್ಗೆ, ಮಧ್ಯಾಹ್ನ ಮತ್ತು ರಾತ್ರಿ)",
+            "Once daily at night": "ದಿನಕ್ಕೆ ಒಮ್ಮೆ ರಾತ್ರಿ",
+            "Once daily in morning": "ದಿನಕ್ಕೆ ಒಮ್ಮೆ ಬೆಳಿಗ್ಗೆ",
+            "Once daily in afternoon": "ದಿನಕ್ಕೆ ಒಮ್ಮೆ ಮಧ್ಯಾಹ್ನ",
+            "Twice daily": "ದಿನಕ್ಕೆ ಎರಡು ಬಾರಿ", "Three times daily": "ದಿನಕ್ಕೆ ಮೂರು ಬಾರಿ",
+            "Once daily": "ದಿನಕ್ಕೆ ಒಂದು ಬಾರಿ", "Four times daily": "ದಿನಕ್ಕೆ ನಾಲ್ಕು ಬಾರಿ",
+            "As per doctor's advice": "ವೈದ್ಯರ ಸಲಹೆಯಂತೆ",
+            "Take as per doctor's suggestion / prescription": "ವೈದ್ಯರ ಸಲಹೆ ಅಥವಾ ಔಷಧಿ ಚೀಟಿಯಂತೆ ತೆಗೆದುಕೊಳ್ಳಿ",
+            "Take as per doctor's suggestion": "ವೈದ್ಯರ ಸಲಹೆಯಂತೆ ತೆಗೆದುಕೊಳ್ಳಿ",
+            "As needed": "ಅಗತ್ಯವಿದ್ದಾಗ", "After food": "ಊಟದ ನಂತರ", "Before food": "ಊಟದ ಮೊದಲು",
+            "With meals": "ಊಟದೊಂದಿಗೆ", "At night": "ರಾತ್ರಿ", "Low salt": "ಕಡಿಮೆ ಉಪ್ಪು",
+            "Low sugar": "ಕಡಿಮೆ ಸಕ್ಕರೆ", "Drink plenty of water": "ಹೆಚ್ಚು ನೀರು ಕುಡಿಯಿರಿ",
+            "Take rest": "ವಿಶ್ರಾಂತಿ ಪಡೆಯಿರಿ", "days": "ದಿನಗಳು", "day": "ದಿನ",
+            "weeks": "ವಾರಗಳು", "week": "ವಾರ", "months": "ತಿಂಗಳುಗಳು", "month": "ತಿಂಗಳು",
+            "tablet": "ಮಾತ್ರೆ", "tablets": "ಮಾತ್ರೆಗಳು", "capsule": "ಕ್ಯಾಪ್ಸುಲ್",
+            "capsules": "ಕ್ಯಾಪ್ಸುಲ್‌ಗಳು", "mg": "ಮಿಗ್ರಾಂ", "ml": "ಮಿಲಿ",
+        },
+        "hindi": {
+            "This is an AI-assisted reading aid, not medical advice. Always confirm your prescription with your doctor or pharmacist before taking any medication.": "यह AI-सहायता प्राप्त पढ़ने का साधन है, चिकित्सा सलाह नहीं। कोई भी दवा लेने से पहले अपने डॉक्टर या फार्मासिस्ट से पुष्टि करें।",
+            "This photo does not appear to be a medical prescription or medicine bill. Please upload a clear photo of a valid doctor's prescription.": "यह तस्वीर मेडिकल पर्चा या दवा का बिल नहीं लगती। कृपया मान्य डॉक्टर के पर्चे की स्पष्ट तस्वीर अपलोड करें।",
+            "is commonly used as prescribed by doctor for health condition management.": "का उपयोग स्वास्थ्य स्थिति के प्रबंधन के लिए डॉक्टर के निर्देशानुसार किया जाता है।",
+            "Diet:": "आहार:", "Exercise:": "व्यायाम:", "Advice:": "सलाह:",
+            "Doctor Notes:": "डॉक्टर के नोट:", "Lifestyle Advice:": "जीवनशैली संबंधी सलाह:",
+            "Disclaimer:": "अस्वीकरण:", "Follow up after": "के बाद जांच कराएं",
+            "regular": "नियमित", "daily": "प्रतिदिन", "min": "मिनट",
+            "please follow a low salt diet and walk daily.": "कृपया कम नमक वाला भोजन लें और प्रतिदिन टहलें।",
+            "follow a low-salt diet and exercise regularly.": "कम नमक वाला भोजन करें और नियमित रूप से व्यायाम करें।",
+            "drink plenty of water and get enough rest.": "खूब पानी पिएं और पर्याप्त आराम करें।",
+            "monitor blood pressure and blood sugar regularly.": "रक्तचाप और रक्त शर्करा की नियमित जांच करें।",
+            "Please": "कृपया", "follow": "पालन करें", "salt": "नमक", "diet": "आहार",
+            "exercise": "व्यायाम", "walk": "टहलें", "walking": "चलना", "daily": "प्रतिदिन",
+            "drink": "पिएं", "water": "पानी", "rest": "आराम", "avoid": "बचें",
+            "consult": "परामर्श करें", "doctor": "डॉक्टर", "medicine": "दवा", "medicines": "दवाइयां",
+            "prescription": "पर्चा", "take": "लें", "after": "बाद", "before": "पहले",
+            "food": "भोजन", "meals": "खाना", "with": "के साथ", "for": "के लिए", "regularly": "नियमित रूप से",
+            "and": "और", "blood pressure": "रक्तचाप", "blood sugar": "रक्त शर्करा",
+            "Twice daily (Morning & Evening)": "दिन में दो बार (सुबह और शाम)",
+            "Three times daily (Morning, Afternoon & Night)": "दिन में तीन बार (सुबह, दोपहर और रात)",
+            "Once daily at night": "रात में दिन में एक बार",
+            "Once daily in morning": "सुबह दिन में एक बार",
+            "Once daily in afternoon": "दोपहर में दिन में एक बार",
+            "Twice daily": "दिन में दो बार", "Three times daily": "दिन में तीन बार",
+            "Once daily": "दिन में एक बार", "Four times daily": "दिन में चार बार",
+            "As per doctor's advice": "डॉक्टर की सलाह के अनुसार",
+            "Take as per doctor's suggestion / prescription": "डॉक्टर की सलाह या पर्चे के अनुसार लें",
+            "Take as per doctor's suggestion": "डॉक्टर की सलाह के अनुसार लें",
+            "As needed": "आवश्यकतानुसार", "After food": "खाने के बाद", "Before food": "खाने से पहले",
+            "With meals": "भोजन के साथ", "At night": "रात में", "Low salt": "कम नमक",
+            "Low sugar": "कम चीनी", "Drink plenty of water": "खूब पानी पिएं",
+            "Take rest": "आराम करें", "days": "दिन", "day": "दिन", "weeks": "सप्ताह",
+            "week": "सप्ताह", "months": "महीने", "month": "महीना", "tablet": "गोली",
+            "tablets": "गोलियां", "capsule": "कैप्सूल", "capsules": "कैप्सूल",
+            "mg": "मि.ग्रा.", "ml": "मि.ली.",
+        }
+    }
+
+    localized = str(text)
+    for source, translated in sorted(translations.get(lang, {}).items(), key=lambda item: -len(item[0])):
+        pattern = re.escape(source)
+        if re.fullmatch(r"[A-Za-z]+", source):
+            pattern = rf"(?<![A-Za-z]){pattern}(?![A-Za-z])"
+        localized = re.sub(pattern, translated, localized, flags=re.IGNORECASE)
+
+    # Avoid network calls for common fields already fully covered locally.
+    if not re.search(r"[A-Za-z]{2,}", localized):
+        return localized
+    if not allow_remote:
+        return localized
+
+    # Prefer Bhashini when configured. In clean clones, use the same Gemini
+    # key as OCR for free-form summaries/advice; local phrase translations
+    # above remain the bounded fallback when either service is unavailable.
+    if is_bhashini_available():
+        try:
+            translated = bhashini_translate(text, target_lang=lang, source_lang="english")
+            if translated and translated != text:
+                return translated
+        except Exception as e:
+            print("Prescription Bhashini translate error:", e)
+
+    api_key = os.getenv("GEMINI_API_KEY", "").strip().strip('"').strip("'")
+    if api_key:
+        try:
+            from google import genai
+            from google.genai import types
+
+            protected_names = re.findall(
+                r"\b(?:Betaloc|Cimetidine|Dorzolamidum|Oxprelol)\b", str(text), re.IGNORECASE
+            )
+            translatable_text = str(text)
+            for index, medicine_name in enumerate(protected_names):
+                translatable_text = re.sub(
+                    re.escape(medicine_name), f"__KEEP_MEDICINE_{index}__",
+                    translatable_text, count=1, flags=re.IGNORECASE
+                )
+            target_name = "Kannada" if lang == "kannada" else "Hindi"
+            prompt = (
+                f"Translate the text into natural {target_name}. Return only the translation. "
+                "Preserve medicine/brand placeholders, numbers, units, and medical meaning exactly. "
+                f"Text: {translatable_text}"
+            )
+            client = genai.Client(
+                api_key=api_key,
+                http_options=types.HttpOptions(timeout=10000)
+            )
+            response = client.models.generate_content(model="gemini-3.8-flash", contents=prompt)
+            translated = (response.text or "").strip()
+            for index, medicine_name in enumerate(protected_names):
+                translated = translated.replace(f"__KEEP_MEDICINE_{index}__", medicine_name)
+            if translated:
+                return translated
+        except Exception as e:
+            print("Prescription Gemini translate error:", e)
+    return localized
+
+
+def translate_prescription_fields(source, language):
+    medicines = [dict(medicine) for medicine in source.get("medicines", [])]
+    for medicine in medicines:
+        for field in ("dose", "frequency", "duration", "instructions"):
+            medicine[field] = localize_prescription_text(medicine.get(field), language)
+    return {
+        "raw_text": localize_prescription_text(source.get("raw_text"), language),
+        "note": localize_prescription_text(source.get("note"), language),
+        "lifestyle_advice": localize_prescription_text(source.get("lifestyle_advice"), language),
+        "doctor_notes": localize_prescription_text(source.get("doctor_notes"), language),
+        "medicines": medicines,
+    }
+
+
+@app.post("/translate-prescription")
+async def translate_prescription(req: PrescriptionTranslateRequest):
+    # This enhancement request is separate from the scan response so remote
+    # translation cannot delay initial result rendering or narration start.
+    return await run_in_threadpool(translate_prescription_fields, req.source, req.language)
 
 @app.post("/scan-prescription/{user_id}")
 async def scan_prescription(
     user_id: int,
     file: UploadFile = File(...),
     language: str = "english",
+    defer_translation: bool = False,
     db: DBSession = Depends(get_db)
 ):
+    request_started = time.perf_counter()
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         return {"error": "User not found"}
 
+    image_read_started = time.perf_counter()
     image_bytes = await file.read()
+    image_read_seconds = time.perf_counter() - image_read_started
     if not image_bytes:
         return {"error": "Empty file uploaded."}
 
     # Call Sanjay's multimodal prescription analyzer via ocr module
+    analysis_started = time.perf_counter()
     try:
-        result = analyze_prescription(image_bytes)
+        result = await run_in_threadpool(analyze_prescription, image_bytes)
         if "error" in result:
             return {"error": result["error"]}
     except Exception as e:
         print("scan_prescription error:", e)
         traceback.print_exc()
         return {"error": "Server error while processing prescription image."}
+    analysis_seconds = time.perf_counter() - analysis_started
 
+    text_processing_started = time.perf_counter()
     raw_text = result.get("raw_text", "")
     medicines = result.get("medicines", [])
-    note = result.get("note")
+    translation_source = {
+        "raw_text": raw_text,
+        "note": result.get("note"),
+        "lifestyle_advice": result.get("lifestyle_advice"),
+        "doctor_notes": result.get("doctor_notes"),
+        "medicines": [dict(medicine) for medicine in medicines],
+    } if defer_translation and language.lower() not in {"en", "english"} else None
+    translation_started = time.perf_counter()
+    allow_remote_translation = not defer_translation
+    for med in medicines:
+        med["dose"] = localize_prescription_text(med.get("dose"), language, allow_remote_translation)
+        med["frequency"] = localize_prescription_text(med.get("frequency"), language, allow_remote_translation)
+        med["duration"] = localize_prescription_text(med.get("duration"), language, allow_remote_translation)
+        med["instructions"] = localize_prescription_text(med.get("instructions"), language, allow_remote_translation)
+    raw_text = localize_prescription_text(raw_text, language, allow_remote_translation)
+    note = localize_prescription_text(result.get("note"), language, allow_remote_translation)
+    lifestyle_advice = localize_prescription_text(result.get("lifestyle_advice"), language, allow_remote_translation)
+    doctor_notes = localize_prescription_text(result.get("doctor_notes"), language, allow_remote_translation)
+    translation_seconds = time.perf_counter() - translation_started
 
     speech_text = medicines_to_speech(medicines, language)
+    text_processing_seconds = time.perf_counter() - text_processing_started
 
-    # Translate speech_text to target language using Bhashini NMT
-    target_lang = (language or "english").lower()
-    if target_lang not in {"en", "english"}:
-        try:
-            translated_speech = bhashini_translate(speech_text, target_lang=target_lang, source_lang="english")
-            if translated_speech:
-                speech_text = translated_speech
-        except Exception as e:
-            print("Scan prescription Bhashini translate error:", e)
-
+    # Audio is requested by the existing frontend speech helper after the scan
+    # response renders, so synthesis cannot hold the OCR result hostage.
     audio_base64 = None
     bhashini_used = False
-    if is_bhashini_available():
-        try:
-            audio_base64 = bhashini_tts(speech_text, lang=target_lang)
-            bhashini_used = True
-        except Exception as e:
-            print("Scan prescription Bhashini TTS error:", e)
 
     # Save prescription image file to uploads
+    persistence_started = time.perf_counter()
     rx_file_path = None
     try:
         upload_dir = "uploads"
@@ -498,6 +705,17 @@ async def scan_prescription(
     except Exception as db_err:
         print("Database/Blockchain save error:", db_err)
         prescription_id = None
+    persistence_seconds = time.perf_counter() - persistence_started
+
+    logger.info("[Prescription] Image read: %.0f ms", image_read_seconds * 1000)
+    logger.info("[Prescription] Analysis: %.0f ms", analysis_seconds * 1000)
+    logger.info("[Prescription] Translation: %.0f ms", translation_seconds * 1000)
+    logger.info("[Prescription] Text processing: %.0f ms", text_processing_seconds * 1000)
+    logger.info("[Prescription] Persistence: %.0f ms", persistence_seconds * 1000)
+    logger.info(
+        "[Prescription] Server total: %.0f ms (TTS deferred)",
+        (time.perf_counter() - request_started) * 1000,
+    )
 
     return {
         "prescription_id": prescription_id,
@@ -507,6 +725,9 @@ async def scan_prescription(
         "audio_base64": audio_base64,
         "bhashini_used": bhashini_used,
         "note": note,
+        "lifestyle_advice": lifestyle_advice,
+        "doctor_notes": doctor_notes,
+        "translation_source": translation_source,
         "image_path": rx_file_path,
         "block_hash": block_hash
     }
@@ -627,23 +848,15 @@ def verify_blockchain(user_id: int, db: DBSession = Depends(get_db)):
     return verify_blockchain_integrity(db, user_id)
 
 @app.get("/medicine-info")
-async def get_medicine_info(medicine: str, language: str = "english"):
+def get_medicine_info(medicine: str, language: str = "english", include_audio: bool = True):
     normalized = normalize_medicine_name(medicine)
     description = f"{normalized} is commonly used as prescribed by doctor for health condition management."
-    
-    target_lang = (language or "english").lower()
-    if target_lang not in {"en", "english"}:
-        try:
-            translated_desc = bhashini_translate(description, target_lang=target_lang, source_lang="english")
-            if translated_desc:
-                description = translated_desc
-        except Exception:
-            pass
+    description = localize_prescription_text(description, language)
 
     audio_base64 = None
-    if is_bhashini_available():
+    if include_audio:
         try:
-            audio_base64 = bhashini_tts(description, lang=target_lang)
+            audio_base64 = bhashini_tts(description, lang=language)
         except Exception:
             pass
 
@@ -652,7 +865,8 @@ async def get_medicine_info(medicine: str, language: str = "english"):
 @app.post("/identify-tablet")
 async def identify_tablet(
     file: UploadFile = File(...),
-    language: str = "english"
+    language: str = "english",
+    include_audio: bool = True,
 ):
     image_bytes = await file.read()
     if not image_bytes:
@@ -660,23 +874,15 @@ async def identify_tablet(
 
     res = identify_tablet_image(image_bytes)
     if res.get("found") and res.get("description"):
-        target_lang = (language or "english").lower()
-        original_desc = res["description"]
-        if target_lang not in {"en", "english"}:
-            try:
-                translated_desc = bhashini_translate(original_desc, target_lang=target_lang, source_lang="english")
-                if translated_desc:
-                    res["description"] = translated_desc
-            except Exception as e:
-                print("Identify tablet Bhashini translate error:", e)
+        res["description"] = localize_prescription_text(res["description"], language)
 
         speech_text = f"{res.get('medicine')}. {res.get('description')}"
         res["speech_text"] = speech_text
 
-        if is_bhashini_available():
+        if include_audio:
             try:
-                res["audio_base64"] = bhashini_tts(speech_text, lang=target_lang)
+                res["audio_base64"] = bhashini_tts(speech_text, lang=language)
             except Exception as e:
-                print("Identify tablet Bhashini TTS error:", e)
+                print("Identify tablet TTS error:", e)
 
     return res
