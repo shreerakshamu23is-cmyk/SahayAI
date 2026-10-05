@@ -161,10 +161,10 @@ function Profile() {
     }
   }
 
-  const announceAndAct = async (text, action) => {
+  const announceAndAct = (text, action) => {
     unlockVoice()
-    const playbackResult = await speakText(text, language)
-    if (playbackResult !== "cancelled") action?.()
+    speakText(text)
+    if (action) setTimeout(action, 800)
   }
 
   const memberSince = new Date().toLocaleDateString("en-IN", {

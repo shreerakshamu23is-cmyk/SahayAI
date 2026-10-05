@@ -404,9 +404,7 @@ function Dashboard() {
   const location = useLocation()
   const navigate = useNavigate()
   const recognitionRef = useRef(null)
-  const recognitionActiveRef = useRef(false)
-  const commandHandledRef = useRef(false)
-  const commandControllerRef = useRef(null)
+  const synthRef = useRef(window.speechSynthesis)
 
   const name = location.state?.name || localStorage.getItem("userName") || "User"
   const language = location.state?.language || localStorage.getItem("userLanguage") || "english"
@@ -428,8 +426,6 @@ function Dashboard() {
 
   useEffect(() => {
     return () => {
-      commandControllerRef.current?.abort()
-      recognitionRef.current?.stop()
       stopVoice()
     }
   }, [])
@@ -440,141 +436,49 @@ function Dashboard() {
     english: "en-US",
   }
 
-  const setVoiceError = (error) => {
-    if (error === "not-allowed" || error === "service-not-allowed") {
-      setVoiceStatus(t.micDenied)
-    } else if (error === "permission-timeout") {
-      setVoiceStatus(t.micPermissionTimeout)
-    } else if (error === "audio-capture") {
-      setVoiceStatus(t.micUnavailable)
-    } else if (error === "no-speech") {
-      setVoiceStatus(t.noSpeech)
-    } else {
-      setVoiceStatus(t.speechServiceError)
-    }
-  }
-
-  const handleCommand = async (command, actionStartedAt = performance.now()) => {
-    setVoiceStatus(t.processingVoice)
+  const handleCommand = async (command) => {
+    setVoiceStatus(language === "kannada" ? "ಆಲೋಚಿಸಲಾಗುತ್ತಿದೆ..." : language === "hindi" ? "सोच रहा हूँ..." : "Thinking...")
     setReplyText("")
     setVideoInfo(null)
 
-    commandControllerRef.current?.abort()
-    const controller = new AbortController()
-    commandControllerRef.current = controller
     try {
-      const params = new URLSearchParams({ message: command, language, name })
       const response = await fetch(
-        `http://localhost:8000/voice-assistant?${params}`,
-        { method: "POST", signal: controller.signal }
+        `http://localhost:8000/voice-assistant?message=${encodeURIComponent(command)}&language=${language}&name=${name}`,
+        { method: "POST" }
       )
       const data = await response.json()
-      if (controller.signal.aborted) return
-      if (!response.ok || data.error) {
-        throw new Error(data.detail || data.error || `Request failed (${response.status})`)
-      }
-      if (!data.reply) throw new Error("The assistant returned an empty response")
       setVoiceStatus(`${t.youSaid} "${command}"`)
       setReplyText(data.reply)
-      // TTS is requested after the text reply arrives, so synthesis latency
-      // does not delay displaying the chatbot response.
-      const playback = speakText(data.reply, language, data.audio_base64, actionStartedAt)
+      speakText(data.reply, language, data.audio_base64)
 
       if (data.videos && data.videos.length > 0) {
         setVideoInfo(data.videos[0])
       }
 
       if (data.navigate_to) {
-        const playbackResult = await playback
-        if (controller.signal.aborted || playbackResult === "cancelled") return
-        if (data.navigate_to === "logout") {
-          navigate("/login-face")
-        } else {
-          navigate("/" + data.navigate_to, {
-            state: { userId, name, language }
-          })
-        }
+        setTimeout(() => {
+          if (data.navigate_to === "logout") {
+            navigate("/login-face")
+          } else {
+            navigate("/" + data.navigate_to, {
+              state: { userId, name, language }
+            })
+          }
+        }, 3500)
       }
-    } catch (error) {
-      if (error.name === "AbortError") return
-      console.error("Voice assistant request failed:", error)
-      setVoiceStatus(t.connectionError)
-      setReplyText(t.connectionError)
-      speakText(t.connectionError, language)
+    } catch {
+      setVoiceStatus("Connection error")
+      speakText("Sorry, I could not connect. Please try again.")
     }
   }
 
-  const startListening = async () => {
-    const listeningStartedAt = performance.now()
-    if (recognitionActiveRef.current) return
+  const startListening = () => {
     if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-      setVoiceStatus(t.speechNotSupported)
+      setVoiceStatus("Please use Chrome browser")
       return
     }
-    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-      setVoiceStatus(t.micUnavailable)
-      return
-    }
-
-    const microphonePermission = await navigator.permissions?.query({ name: "microphone" })
-      .catch(() => null)
-    if (microphonePermission?.state === "denied") {
-      setVoiceStatus(t.micDenied)
-      return
-    }
-
-    recognitionActiveRef.current = true
-    setVoiceStatus(t.requestingMicrophone)
-    let microphoneStream
-    let permissionTimedOut = false
-    let permissionTimeoutId
-    try {
-      const microphoneRequest = navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
-        if (permissionTimedOut) {
-          stream.getTracks().forEach(track => track.stop())
-          return null
-        }
-        return stream
-      })
-      microphoneStream = await Promise.race([
-        microphoneRequest,
-        new Promise((_, reject) => {
-          permissionTimeoutId = window.setTimeout(() => {
-            permissionTimedOut = true
-            const timeoutError = new Error("Microphone permission timed out")
-            timeoutError.name = "PermissionTimeoutError"
-            reject(timeoutError)
-          }, 8000)
-        }),
-      ])
-      window.clearTimeout(permissionTimeoutId)
-      if (!microphoneStream) {
-        recognitionActiveRef.current = false
-        return
-      }
-      microphoneStream.getTracks().forEach(track => track.stop())
-    } catch (error) {
-      window.clearTimeout(permissionTimeoutId)
-      recognitionActiveRef.current = false
-      setVoiceError(error.name === "NotAllowedError" || error.name === "SecurityError"
-        ? "not-allowed"
-        : error.name === "NotFoundError" || error.name === "NotReadableError"
-          ? "audio-capture"
-          : error.name === "PermissionTimeoutError"
-            ? "permission-timeout"
-          : "service-not-allowed")
-      return
-    }
-
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
-    let recognition
-    try {
-      recognition = new SpeechRecognition()
-    } catch {
-      recognitionActiveRef.current = false
-      setVoiceStatus(t.speechServiceError)
-      return
-    }
+    const recognition = new SpeechRecognition()
     recognitionRef.current = recognition
     recognition.lang = langCodes[language] || "en-US"
     recognition.continuous = false
@@ -585,43 +489,23 @@ function Dashboard() {
       setVoiceStatus(t.listening)
       setTranscript("")
       setReplyText("")
-      commandHandledRef.current = false
     }
     recognition.onresult = (e) => {
-      const said = Array.from(e.results)
-        .slice(e.resultIndex)
-        .filter(result => result.isFinal)
-        .map(result => result[0].transcript)
-        .join(" ")
-        .trim()
-      if (!said || commandHandledRef.current) return
-      commandHandledRef.current = true
+      const said = e.results[0][0].transcript
       setTranscript(said)
-      handleCommand(said, listeningStartedAt)
+      handleCommand(said)
     }
-    recognition.onerror = (event) => {
+    recognition.onerror = () => {
       setListening(false)
-      recognitionActiveRef.current = false
-      if (event.error !== "aborted") setVoiceError(event.error)
+      setVoiceStatus("Could not hear clearly. Please try again.")
     }
-    recognition.onend = () => {
-      setListening(false)
-      recognitionActiveRef.current = false
-      recognitionRef.current = null
-    }
-    try {
-      recognition.start()
-    } catch (error) {
-      recognitionActiveRef.current = false
-      setListening(false)
-      setVoiceError(error.name === "NotAllowedError" ? "not-allowed" : "service-not-allowed")
-    }
+    recognition.onend = () => { setListening(false) }
+    recognition.start()
   }
 
   const stopListening = () => {
     if (recognitionRef.current) recognitionRef.current.stop()
     setListening(false)
-    recognitionActiveRef.current = false
     setVoiceStatus("")
   }
 
@@ -678,6 +562,7 @@ function Dashboard() {
                   title="Click to speak with SahayAI"
                   onClick={() => {
                     unlockVoice()
+                    synthRef.current.cancel()
                     listening ? stopListening() : startListening()
                   }}
                 >

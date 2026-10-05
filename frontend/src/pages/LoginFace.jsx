@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
-import { unlockVoice, speakText, stopVoice } from "../voiceHelper"
+import { unlockVoice, speakText } from "../voiceHelper"
 
 const styles = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -65,22 +65,20 @@ const styles = `
   .preview-img { width: 100%; border-radius: 16px; margin-bottom: 1.2rem; }
 `
 
-const speakGreeting = (name, language, actionStartedAt) => {
+const speakGreeting = (name, language) => {
   const greetings = {
-    kannada: `ನಮಸ್ಕಾರ ${name}, ಸುಸ್ವಾಗತ`,
-    hindi: `नमस्ते ${name}, आपका स्वागत है`,
-    english: `Welcome ${name}`,
+    kannada: `Namaskara ${name}, Swagata`,
+    hindi: `Namaste ${name}, Swagat hai`,
+    english: `Hello ${name}, welcome to Sahay AI`,
   }
   const text = greetings[language] || greetings["english"]
-  return speakText(text, language, null, actionStartedAt)
+  speakText(text)
 }
 
 function LoginFace() {
   const navigate = useNavigate()
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
-  const mountedRef = useRef(false)
-  const loginAttemptRef = useRef(0)
 
   const [streaming, setStreaming] = useState(false)
   const [photo, setPhoto] = useState(null)
@@ -90,12 +88,12 @@ function LoginFace() {
   const [loggedInUser, setLoggedInUser] = useState(null)
 
   useEffect(() => {
-    mountedRef.current = true
     startCamera()
     return () => {
-      mountedRef.current = false
       stopCamera()
-      stopVoice()
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel()
+      }
     }
   }, [])
 
@@ -131,8 +129,6 @@ function LoginFace() {
   }
 
   const retake = () => {
-    loginAttemptRef.current += 1
-    stopVoice()
     setPhoto(null)
     setMessage("")
     setLoggedInUser(null)
@@ -141,8 +137,6 @@ function LoginFace() {
 
   const loginWithFace = async () => {
     if (!photo) return
-    const loginAttempt = ++loginAttemptRef.current
-    const actionStartedAt = performance.now()
     setLoading(true)
     setMessage("")
 
@@ -183,18 +177,19 @@ function LoginFace() {
       if (data.success) {
         setLoggedInUser(data)
         setMsgType("success")
+        speakGreeting(data.name, data.language)
         localStorage.setItem("userId", data.user_id)
         localStorage.setItem("userName", data.name)
         localStorage.setItem("userLanguage", data.language)
-        const greetingResult = await speakGreeting(data.name, data.language, actionStartedAt)
-        if (greetingResult === "cancelled" || !mountedRef.current || loginAttemptRef.current !== loginAttempt) return
-        navigate("/dashboard", {
-          state: {
-            userId: data.user_id,
-            name: data.name,
-            language: data.language
-          }
-        })
+        setTimeout(() => {
+          navigate("/dashboard", {
+            state: {
+              userId: data.user_id,
+              name: data.name,
+              language: data.language
+            }
+          })
+        }, 3000)
       } else {
         setMessage(data.error || "Face not recognised")
         setMsgType("error")

@@ -161,11 +161,6 @@ function Prescription() {
   const canvasRef = useRef(null)
   const fileRef = useRef(null)
   const tabletFileRef = useRef(null)
-  const scanControllerRef = useRef(null)
-  const translationControllerRef = useRef(null)
-  const speechActionStartedAtRef = useRef(null)
-  const scanSequenceRef = useRef(0)
-  const renderedScanSequenceRef = useRef(0)
 
   const name = location.state?.name || "User"
   const language = location.state?.language || "english"
@@ -188,21 +183,9 @@ function Prescription() {
 
   useEffect(() => {
     return () => {
-      scanControllerRef.current?.abort()
-      translationControllerRef.current?.abort()
       stopVoice()
     }
   }, [])
-
-  useEffect(() => {
-    if (!result) return
-    const actionStartedAt = speechActionStartedAtRef.current
-    if (renderedScanSequenceRef.current === scanSequenceRef.current) return
-    renderedScanSequenceRef.current = scanSequenceRef.current
-    console.info(
-      `[Prescription] Result rendered: ${Math.round(performance.now() - actionStartedAt)} ms`
-    )
-  }, [result])
 
   const startCamera = async () => {
     setMode("camera")
@@ -256,109 +239,37 @@ function Prescription() {
 
   const scanPrescription = async () => {
     if (!photo) return
-    const userActionAt = performance.now()
-    const scanSequence = ++scanSequenceRef.current
-    speechActionStartedAtRef.current = userActionAt
-    scanControllerRef.current?.abort()
-    translationControllerRef.current?.abort()
-    translationControllerRef.current = null
-    const controller = new AbortController()
-    scanControllerRef.current = controller
-    stopVoice()
     setLoading(true)
     setError("")
     setResult(null)
 
     try {
-      const imagePreparationStarted = performance.now()
       const blob = await fetch(photo).then(r => r.blob())
-      console.info(`[Prescription] Image preparation: ${Math.round(performance.now() - imagePreparationStarted)} ms`)
       const formData = new FormData()
       formData.append("file", blob, "prescription.jpg")
 
-      const uploadStartedAt = performance.now()
-      let uploadCompletedAt = uploadStartedAt
-      const response = await new Promise((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
-        const abortRequest = () => xhr.abort()
-        let uploadTimingLogged = false
-        controller.signal.addEventListener("abort", abortRequest, { once: true })
-        const logUploadComplete = () => {
-          if (uploadTimingLogged) return
-          uploadTimingLogged = true
-          uploadCompletedAt = performance.now()
-          console.info(`[Prescription] Upload: ${Math.round(uploadCompletedAt - uploadStartedAt)} ms`)
-        }
-        xhr.upload.addEventListener("load", logUploadComplete)
-        xhr.upload.addEventListener("loadend", logUploadComplete)
-        xhr.addEventListener("load", () => {
-          controller.signal.removeEventListener("abort", abortRequest)
-          logUploadComplete()
-          console.info(`[Prescription] API response: ${Math.round(performance.now() - uploadCompletedAt)} ms after upload`)
-          resolve({
-            ok: xhr.status >= 200 && xhr.status < 300,
-            status: xhr.status,
-            statusText: xhr.statusText,
-            text: () => Promise.resolve(xhr.responseText),
-            json: () => Promise.resolve(JSON.parse(xhr.responseText)),
-          })
-        }, { once: true })
-        xhr.addEventListener("error", () => reject(new Error("Prescription upload failed")), { once: true })
-        xhr.addEventListener("abort", () => reject(new DOMException("Scan request cancelled", "AbortError")), { once: true })
-        xhr.open("POST", `http://localhost:8000/scan-prescription/${userId}?language=${language}&defer_translation=true`)
-        xhr.send(formData)
-      })
+      const response = await fetch(
+        `http://localhost:8000/scan-prescription/${userId}?language=${language}`,
+        { method: "POST", body: formData }
+      )
       if (!response.ok) {
         const errorText = await response.text()
         setError(`Server error ${response.status}: ${errorText || response.statusText}`)
         return
       }
       const data = await response.json()
-      console.info(`[Prescription] OCR result received: ${Math.round(performance.now() - userActionAt)} ms`)
 
       if (data.error) {
         setError(data.error)
       } else {
-        // Commit the result immediately. TTS begins independently and is never
-        // awaited, so React can render while generation/network playback runs.
-        const translationSource = data.translation_source
-        delete data.translation_source
         setResult(data)
-        const ttsRequestedAt = performance.now()
-        console.info(`[Prescription TTS] Request started: ${Math.round(ttsRequestedAt - userActionAt)} ms after scan`)
-        void speakHelper(data.speech_text, language, data.audio_base64, userActionAt, "Prescription TTS")
+        speakHelper(data.speech_text, language, data.audio_base64)
         fetchMedicineDescriptions(data.medicines)
-
-        // Remote NMT/Gemini can be slow or unavailable. Apply its enhancement
-        // after the result is visible; it never gates result state or audio.
-        if (translationSource && !controller.signal.aborted) {
-          const translationController = new AbortController()
-          translationControllerRef.current = translationController
-          fetch("http://localhost:8000/translate-prescription", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ language, source: translationSource }),
-            signal: translationController.signal,
-          })
-            .then(response => response.ok ? response.json() : null)
-            .then(translated => {
-              if (translated && scanSequenceRef.current === scanSequence) {
-                setResult(current => current ? { ...current, ...translated } : current)
-              }
-            })
-            .catch(err => {
-              if (err.name !== "AbortError") {
-                console.warn("Deferred prescription translation failed:", err)
-              }
-            })
-        }
       }
     } catch (err) {
-      if (err.name === "AbortError") return
       console.error("scanPrescription error:", err)
       setError("Could not connect to server")
     } finally {
-      if (scanControllerRef.current === controller) scanControllerRef.current = null
       setLoading(false)
     }
   }
@@ -369,7 +280,7 @@ function Prescription() {
     await Promise.all(medicines.map(async (med) => {
       try {
         const res = await fetch(
-            `http://localhost:8000/medicine-info?medicine=${encodeURIComponent(med.medicine)}&language=${language}&include_audio=false`
+          `http://localhost:8000/medicine-info?medicine=${encodeURIComponent(med.medicine)}&language=${language}`
         )
         const data = await res.json()
         descriptions[med.medicine] = data.description
@@ -382,7 +293,6 @@ function Prescription() {
 
   const identifyTablet = async () => {
     if (!tabletPhoto) return
-    stopVoice()
     setTabletLoading(true)
     setTabletError("")
     setTabletResult(null)
@@ -393,7 +303,7 @@ function Prescription() {
       formData.append("file", blob, "tablet.jpg")
 
       const response = await fetch(
-        `http://localhost:8000/identify-tablet?language=${language}&include_audio=false`,
+        `http://localhost:8000/identify-tablet?language=${language}`,
         { method: "POST", body: formData }
       )
       if (!response.ok) {
@@ -420,11 +330,6 @@ function Prescription() {
   }
 
   const retake = () => {
-    scanControllerRef.current?.abort()
-    scanControllerRef.current = null
-    translationControllerRef.current?.abort()
-    translationControllerRef.current = null
-    stopVoice()
     setPhoto(null)
     setResult(null)
     setError("")
@@ -460,7 +365,7 @@ function Prescription() {
           <button className="back" onClick={() => {
             stopCamera()
             navigate("/dashboard", { state: { userId, name, language } })
-          }}>{t.back}</button>
+          }}>← Back</button>
         </div>
 
         <div className="content">
@@ -671,7 +576,7 @@ function Prescription() {
                             <div key={j} className="time-icon-box">
                               <span style={{ fontSize: "1.2rem" }}>{item.icon}</span>
                               <span className="time-icon-label">{item.label}</span>
-                              <span className="time-icon-tab">1 {t.tabletShort}</span>
+                              <span className="time-icon-tab">1 tab</span>
                             </div>
                           ))}
                         </div>
@@ -712,16 +617,16 @@ function Prescription() {
                   marginBottom: "1rem"
                 }}>
                   <div style={{ fontWeight: "800", color: "#044E3B", fontSize: "0.98rem", marginBottom: "0.5rem" }}>
-                    📋 {t.doctorAdviceTitle}
+                    📋 Doctor's Advice & Lifestyle Guidance
                   </div>
                   {result.lifestyle_advice && (
                     <div style={{ fontSize: "0.85rem", color: "#0F6E56", marginBottom: "0.4rem", lineHeight: "1.4" }}>
-                      <strong>{t.dietExercise}</strong> {result.lifestyle_advice}
+                      <strong>🥗 Diet & Exercise:</strong> {result.lifestyle_advice}
                     </div>
                   )}
                   {result.doctor_notes && (
                     <div style={{ fontSize: "0.85rem", color: "#0F6E56", lineHeight: "1.4" }}>
-                      <strong>{t.adviceFollowUp}</strong> {result.doctor_notes}
+                      <strong>👨‍⚕️ Advice & Follow-up:</strong> {result.doctor_notes}
                     </div>
                   )}
                 </div>
@@ -735,7 +640,7 @@ function Prescription() {
 
               <details style={{ marginTop: "1rem" }}>
                 <summary style={{ cursor: "pointer", color: "#888", fontSize: ".8rem" }}>
-                  {t.rawText}
+                  Show raw text
                 </summary>
                 <div style={{
                   background: "#f9f9f7", borderRadius: "8px",
