@@ -66,13 +66,14 @@ const styles = `
 `
 
 const speakGreeting = (name, language) => {
+  const cleanLang = (language || "english").toLowerCase()
   const greetings = {
-    kannada: `Namaskara ${name}, Swagata`,
-    hindi: `Namaste ${name}, Swagat hai`,
+    kannada: `ನಮಸ್ಕಾರ ${name}, ಸ್ವಾಗತ`,
+    hindi: `नमस्ते ${name}, स्वागत है`,
     english: `Hello ${name}, welcome to Sahay AI`,
   }
-  const text = greetings[language] || greetings["english"]
-  speakText(text)
+  const text = greetings[cleanLang] || greetings["english"]
+  speakText(text, cleanLang)
 }
 
 function LoginFace() {
