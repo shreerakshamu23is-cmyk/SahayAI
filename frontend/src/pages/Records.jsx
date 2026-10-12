@@ -362,13 +362,23 @@ function Records() {
     }
   }
 
+  const [auditResult, setAuditResult] = useState(null)
+
   const auditBlockchain = async () => {
     setVerifyingBlockchain(true)
+    setAuditResult(null)
     const activeUserId = userId || localStorage.getItem("userId") || 1
     try {
       const res = await fetch(`http://localhost:8000/api/blockchain/verify/${activeUserId}`)
       const data = await res.json()
-      if (data.verified) {
+      const isVerified = Boolean(data.verified || data.is_valid || data.status === "verified")
+      if (isVerified) {
+        setAuditResult({
+          success: true,
+          message: data.message || "Blockchain ledger verified 100% authentic and tamper-proof.",
+          total_blocks: data.total_blocks || blockchainData.blocks?.length || 0,
+          timestamp: data.audited_at || new Date().toLocaleTimeString()
+        })
         const msg = language === "kannada"
           ? "ಬ್ಲಾಕ್‌ಚೈನ್ ಪರಿಶೀಲಿಸಲಾಗಿದೆ! ನಿಮ್ಮ ಎಲ್ಲಾ ವೈದ್ಯಕೀಯ ದಾಖಲೆಗಳು 100% ಸುರಕ್ಷಿತ ಮತ್ತು ಬದಲಾಯಿಸಲಾಗದವು."
           : language === "hindi"
@@ -376,9 +386,19 @@ function Records() {
             : "Blockchain Ledger Audit Complete! All medical records verified 100% authentic and tamper-proof."
         speakText(msg, language)
       } else {
+        setAuditResult({
+          success: false,
+          message: data.message || "Warning: Blockchain integrity check failed! Data tampering detected.",
+          timestamp: new Date().toLocaleTimeString()
+        })
         speakText("Warning: Ledger verification issue detected.", language)
       }
     } catch {
+      setAuditResult({
+        success: false,
+        message: "Unable to connect to blockchain verification service.",
+        timestamp: new Date().toLocaleTimeString()
+      })
       speakText("Unable to reach blockchain ledger audit server.", language)
     } finally {
       setVerifyingBlockchain(false)
@@ -667,6 +687,31 @@ function Records() {
                 >
                   {verifyingBlockchain ? "🔍 Auditing Chain..." : `🔍 ${t.auditBtn}`}
                 </button>
+
+                {auditResult && (
+                  <div style={{
+                    marginTop: "14px",
+                    padding: "12px 16px",
+                    borderRadius: "12px",
+                    background: auditResult.success ? "#E1F5EE" : "#FEE2E2",
+                    border: `1.5px solid ${auditResult.success ? "#9FE1CB" : "#FCA5A5"}`,
+                    color: auditResult.success ? "#044E3B" : "#991B1B",
+                    fontSize: "0.88rem",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "10px"
+                  }}>
+                    <span style={{ fontSize: "1.3rem" }}>{auditResult.success ? "✅" : "⚠️"}</span>
+                    <div>
+                      <strong>{auditResult.success ? "Audit Passed:" : "Audit Alert:"}</strong> {auditResult.message}
+                      {auditResult.total_blocks > 0 && (
+                        <div style={{ fontSize: "0.78rem", opacity: 0.85, marginTop: "2px" }}>
+                          Verified {auditResult.total_blocks} block(s) · Timestamp: {auditResult.timestamp}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <h3 style={{ fontSize: "1.1rem", fontWeight: 800, color: "#044E3B", marginBottom: "1rem" }}>

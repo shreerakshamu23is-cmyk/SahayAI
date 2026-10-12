@@ -57,36 +57,33 @@ def verify_blockchain_integrity(db: Session, user_id: Optional[int] = None) -> D
     Verifies that no record in the blockchain ledger has been tampered with or modified.
     Returns audit statistics and integrity status.
     """
-    query = db.query(BlockchainRecord).order_by(BlockchainRecord.id.asc())
-    if user_id:
-        query = query.filter(BlockchainRecord.user_id == user_id)
-
-    blocks = query.all()
-    if not blocks:
+    all_blocks = db.query(BlockchainRecord).order_by(BlockchainRecord.id.asc()).all()
+    if not all_blocks:
         return {
             "status": "empty",
             "is_valid": True,
+            "verified": True,
             "total_blocks": 0,
             "message": "Blockchain ledger is empty. No blocks created yet."
         }
 
-    prev_hash = GENESIS_PREV_HASH
-    for block in blocks:
-        # Check chain linkage
-        if block.id > 1 and block.prev_hash != prev_hash and not user_id:
+    for i in range(1, len(all_blocks)):
+        if all_blocks[i].prev_hash != all_blocks[i - 1].block_hash:
             return {
                 "status": "tampered",
                 "is_valid": False,
-                "failed_block_id": block.id,
-                "message": f"Block #{block.id} previous hash mismatch! Data tampering detected."
+                "verified": False,
+                "failed_block_id": all_blocks[i].id,
+                "message": f"Block #{all_blocks[i].id} previous hash mismatch! Data tampering detected."
             }
-        prev_hash = block.block_hash
 
+    display_blocks = [b for b in all_blocks if b.user_id == user_id] if user_id else all_blocks
     return {
         "status": "verified",
         "is_valid": True,
-        "total_blocks": len(blocks),
-        "latest_block_hash": blocks[-1].block_hash,
+        "verified": True,
+        "total_blocks": len(display_blocks),
+        "latest_block_hash": all_blocks[-1].block_hash,
         "audited_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "message": "Blockchain ledger verified 100% authentic and tamper-proof."
     }

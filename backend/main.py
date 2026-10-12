@@ -534,6 +534,10 @@ async def upload_document(
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
+    # Compute binary SHA-256 checksum of the uploaded file/PDF
+    with open(file_path, "rb") as f:
+        file_sha256 = hashlib.sha256(f.read()).hexdigest()
+
     new_doc = MedicalDocument(
         user_id=user_id,
         title=title,
@@ -557,7 +561,8 @@ async def upload_document(
                 "document_id": new_doc.id,
                 "title": title,
                 "document_type": document_type,
-                "file_path": file_path
+                "file_path": file_path,
+                "file_sha256": file_sha256
             }
         )
         new_doc.block_hash = block.block_hash
@@ -616,7 +621,7 @@ def get_blockchain_records(user_id: int, db: DBSession = Depends(get_db)):
     records = get_user_blockchain_records(db, user_id)
     verification = verify_blockchain_integrity(db, user_id)
     return {
-        "verified": verification.get("verified", False),
+        "verified": verification.get("is_valid", verification.get("verified", False)),
         "message": verification.get("message", ""),
         "total_blocks": len(records),
         "blocks": records
@@ -624,7 +629,9 @@ def get_blockchain_records(user_id: int, db: DBSession = Depends(get_db)):
 
 @app.get("/api/blockchain/verify/{user_id}")
 def verify_blockchain(user_id: int, db: DBSession = Depends(get_db)):
-    return verify_blockchain_integrity(db, user_id)
+    verification = verify_blockchain_integrity(db, user_id)
+    verification["verified"] = verification.get("is_valid", verification.get("verified", False))
+    return verification
 
 @app.get("/medicine-info")
 async def get_medicine_info(medicine: str, language: str = "english"):
