@@ -51,7 +51,11 @@ const CENTRAL_SCHEMES = [
       hindi: "प्रति वर्ष प्रति परिवार ₹5 लाख मुफ्त कैशलेस इलाज",
     },
     howToApply: "Visit nearest empaneled public/private hospital or Ayushman Mitra booth with Aadhaar & Ration Card.",
-    applyUrl: "https://beneficiary.nha.gov.in/",
+    howToApplyLocal: {
+      kannada: "ಹತ್ತಿರದ ಆಸ್ಪತ್ರೆ ಅಥವಾ ಆಯುಷ್ಮಾನ್ ಮಿತ್ರ ಕೇಂದ್ರಕ್ಕೆ ಆಧಾರ್ ಮತ್ತು ರೇಷನ್ ಕಾರ್ಡ್‌ನೊಂದಿಗೆ ಭೇಟಿ ನೀಡಿ.",
+      hindi: "आधार और राशन कार्ड लेकर नजदीकी अस्पताल या आयुष्मान मित्र केंद्र में जाएं।",
+    },
+    applyUrl: "https://www.myscheme.gov.in/schemes/ab-pmjay",
     color: "#E1F5EE",
     borderColor: "#9FE1CB",
   },
@@ -219,7 +223,11 @@ const CENTRAL_SCHEMES = [
       hindi: "30 स्वास्थ्य समस्याओं के लिए बच्चों की मुफ्त जांच और उपचार",
     },
     howToApply: "Mobile Health Teams screen children at Anganwadis and Government Schools.",
-    applyUrl: "https://rbsk.gov.in/",
+    howToApplyLocal: {
+      kannada: "ಮೊಬೈಲ್ ಆರೋಗ್ಯ ತಂಡಗಳು ಅಂಗನವಾಡಿ ಮತ್ತು ಸರ್ಕಾರಿ ಶಾಲೆಗಳಲ್ಲಿ ಮಕ್ಕಳ ಆರೋಗ್ಯ ತಪಾಸಣೆ ನಡೆಸುತ್ತವೆ.",
+      hindi: "मोबाइल स्वास्थ्य दल आंगनवाड़ी और सरकारी स्कूलों में बच्चों की मुफ्त जांच करते हैं।",
+    },
+    applyUrl: "https://rbsk.mohfw.gov.in/",
     color: "#FFF7ED",
     borderColor: "#FDBA74",
   },
@@ -483,7 +491,11 @@ const CENTRAL_SCHEMES = [
       hindi: "जिला स्तर पर मुफ्त क्रिटिकल केयर ब्लॉक और स्वास्थ्य केंद्र",
     },
     howToApply: "Services accessible at all upgraded District Hospitals and Urban Health Centers.",
-    applyUrl: "https://mohfw.gov.in/?q=major-programmes/pm-ayushman-bharat-health-infrastructure-mission-pm-abhim",
+    howToApplyLocal: {
+      kannada: "ಮೇಲ್ದರ್ಜೆಗೇರಿಸಿದ ಜಿಲ್ಲಾ ಆಸ್ಪತ್ರೆಗಳು ಮತ್ತು ನಗರ ಆರೋಗ್ಯ ಕೇಂದ್ರಗಳಲ್ಲಿ ಉಚಿತ ಸೇವೆ ಲಭ್ಯವಿದೆ.",
+      hindi: "उन्नत जिला अस्पतालों और शहरी स्वास्थ्य केंद्रों पर यह सुविधाएं उपलब्ध हैं।",
+    },
+    applyUrl: "https://nhsrcindia.org/pm-abhim",
     color: "#CCFBF1",
     borderColor: "#5EEAD4",
   },
@@ -876,7 +888,7 @@ function Schemes() {
       getLocalText(scheme, "name"),
       getLocalText(scheme, "who"),
       getLocalText(scheme, "benefit"),
-      scheme.howToApply,
+      getLocalText(scheme, "howToApply"),
     ].filter(Boolean)
     speakText(lines.join(". "), language)
   }
@@ -905,7 +917,7 @@ function Schemes() {
         {isOpen && (
           <div className="scheme-segment">
             <span className="scheme-label">{t.detailsLabel}</span>
-            <p className="scheme-how">{scheme.howToApply}</p>
+            <p className="scheme-how">{getLocalText(scheme, "howToApply")}</p>
           </div>
         )}
 
@@ -921,13 +933,8 @@ function Schemes() {
           <a
             href={scheme.applyUrl}
             target="_blank"
-            rel="noreferrer"
+            rel="noopener noreferrer"
             className="action-link"
-            onClick={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              window.open(scheme.applyUrl, "_blank", "noopener,noreferrer")
-            }}
           >
             {t.applyNow}
           </a>

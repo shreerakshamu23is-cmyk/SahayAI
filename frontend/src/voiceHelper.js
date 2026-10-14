@@ -76,13 +76,17 @@ export const speakTextWithBhashini = async (text, language = "kannada", audioBas
 
     if (!text || (typeof text === "string" && !text.trim())) return
 
-    // 2. Attempt Bhashini TTS API
+    // 2. Attempt Bhashini TTS API with 2.2s timeout to avoid any long audio lag
     try {
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 2200)
         const res = await fetch("http://localhost:8000/api/bhashini/tts", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ text, language })
+            body: JSON.stringify({ text, language }),
+            signal: controller.signal
         })
+        clearTimeout(timeoutId)
         if (res.ok) {
             const data = await res.json()
             if (data.audio_base64) {
@@ -90,10 +94,10 @@ export const speakTextWithBhashini = async (text, language = "kannada", audioBas
             }
         }
     } catch (e) {
-        console.warn("Bhashini TTS fetch failed, falling back to browser speech:", e)
+        console.warn("Bhashini TTS fetch timed out or failed, falling back to instant browser speech:", e)
     }
 
-    // 3. Fallback to Web SpeechSynthesis API
+    // 3. Instant Fallback to Web SpeechSynthesis API
     return speakTextBrowser(text, language)
 }
 

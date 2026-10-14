@@ -40,6 +40,19 @@ const recordTranslations = {
     tamperProof: "ಯಾರೂ ಬದಲಾಯಿಸಲು ಸಾಧ್ಯವಿಲ್ಲ (SHA-256)",
     auditBtn: "ಭದ್ರತೆ ಪರಿಶೀಲಿಸಿ (Audit Ledger)",
     blockHash: "ಬ್ಲಾಕ್ ಹ್ಯಾಶ್",
+    viewDocBtn: "👁️ ದಾಖಲೆ ವೀಕ್ಷಿಸಿ / ತೆರೆಯಿರಿ",
+    viewPrescriptionBtn: "🖼️ ಮೂಲ ಔಷಧಿ ಚೀಟಿ ವೀಕ್ಷಿಸಿ",
+    openNewTab: "🌐 ಹೊಸ ಟ್ಯಾಬ್‌ನಲ್ಲಿ ತೆರೆಯಿರಿ",
+    close: "ಮುಚ್ಚಿ",
+    docTypes: {
+      prescription: "ಔಷಧಿ ಚೀಟಿ",
+      lab_report: "ಲ್ಯಾಬ್ ವರದಿ",
+      xray: "ಎಕ್ಸ್-ರೇ / ಸ್ಕ್ಯಾನ್",
+      discharge: "ಡಿಸ್ಚಾರ್ಜ್ ಸಾರಾಂಶ",
+      vaccination: "ಲಸಿಕೆ ದಾಖಲೆ",
+      insurance: "ವಿಮೆ ಕಾರ್ಡ್",
+      other: "ದಾಖಲೆ"
+    }
   },
   hindi: {
     prescriptions: "पर्चे",
@@ -78,6 +91,19 @@ const recordTranslations = {
     tamperProof: "कोई भी छेड़छाड़ नहीं कर सकता (SHA-256)",
     auditBtn: "सुरक्षा जांचें (Audit Ledger)",
     blockHash: "ब्लॉक हैश",
+    viewDocBtn: "👁️ दस्तावेज़ देखें / खोलें",
+    viewPrescriptionBtn: "🖼️ मूल पर्चा देखें",
+    openNewTab: "🌐 नए टैब में खोलें",
+    close: "बंद करें",
+    docTypes: {
+      prescription: "पर्चा",
+      lab_report: "लैब रिपोर्ट",
+      xray: "एक्स-रे / स्कैन",
+      discharge: "डिस्चार्ज सारांश",
+      vaccination: "टीकाकरण रिकॉर्ड",
+      insurance: "बीमा कार्ड",
+      other: "दस्तावेज़"
+    }
   },
   english: {
     prescriptions: "Prescriptions",
@@ -116,6 +142,19 @@ const recordTranslations = {
     tamperProof: "Immutable & Tamper-Proof (SHA-256 Cryptographic Hash)",
     auditBtn: "Audit Ledger Integrity",
     blockHash: "Block Hash",
+    viewDocBtn: "👁️ View / Open Document",
+    viewPrescriptionBtn: "🖼️ View Original Prescription Paper",
+    openNewTab: "🌐 Open Fullscreen / New Tab",
+    close: "Close",
+    docTypes: {
+      prescription: "Prescription",
+      lab_report: "Lab Report",
+      xray: "X-Ray / Scan",
+      discharge: "Discharge Summary",
+      vaccination: "Vaccination Record",
+      insurance: "Insurance Card",
+      other: "Document"
+    }
   }
 }
 
@@ -579,7 +618,7 @@ function Records() {
                           cursor: "pointer"
                         }}
                       >
-                        🖼️ View Original Prescription Paper
+                        {t.viewPrescriptionBtn}
                       </button>
                     )}
                     {p.block_hash && (
@@ -620,7 +659,7 @@ function Records() {
                     <div className="doc-icon">{getDocIcon(doc.document_type)}</div>
                     <div className="doc-info">
                       <div className="doc-type">
-                        {DOC_TYPES.find(d => d.value === doc.document_type)?.label || "Document"}
+                        {t.docTypes?.[doc.document_type] || DOC_TYPES.find(d => d.value === doc.document_type)?.label || "Document"}
                       </div>
                       <div className="doc-title">{doc.title}</div>
                       {doc.description && (
@@ -652,7 +691,7 @@ function Records() {
                             boxShadow: "0 2px 8px rgba(15, 110, 86, 0.2)"
                           }}
                         >
-                          👁️ View / Open Document
+                          {t.viewDocBtn}
                         </button>
                       )}
                       {doc.block_hash && (
@@ -911,7 +950,7 @@ function Records() {
                   fontSize: "0.88rem"
                 }}
               >
-                🌐 Open Fullscreen / New Tab
+                {t.openNewTab}
               </a>
               <button
                 onClick={() => setPreviewModal(null)}
@@ -925,7 +964,7 @@ function Records() {
                   cursor: "pointer"
                 }}
               >
-                Close
+                {t.close}
               </button>
             </div>
           </div>

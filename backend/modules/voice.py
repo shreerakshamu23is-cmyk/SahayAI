@@ -65,6 +65,14 @@ def is_bhashini_available() -> bool:
     headers = get_bhashini_headers()
     return headers is not None
 
+# In-memory caches to make repeated voice/TTS queries instantaneous
+_TTS_CACHE = {}
+_TRANSLATE_CACHE = {}
+
+def is_indic_text(text: str) -> bool:
+    """Returns True if text contains Indic Unicode characters (Devanagari, Bengali, Gurmukhi, Gujarati, Oriya, Tamil, Telugu, Kannada, Malayalam)."""
+    return any('\u0900' <= c <= '\u0D7F' for c in text)
+
 def bhashini_translate(text: str, target_lang: str, source_lang: str = "en") -> str:
     """Translates text into target Indian language using Bhashini NMT."""
     if not text or not text.strip():
@@ -79,6 +87,10 @@ def bhashini_translate(text: str, target_lang: str, source_lang: str = "en") -> 
 
     if src == tgt:
         return text
+
+    cache_key = f"{src}->{tgt}:{text.strip()}"
+    if cache_key in _TRANSLATE_CACHE:
+        return _TRANSLATE_CACHE[cache_key]
 
     payload = {
         "pipelineTasks": [
@@ -98,14 +110,16 @@ def bhashini_translate(text: str, target_lang: str, source_lang: str = "en") -> 
     }
 
     try:
-        response = requests.post(BHASHINI_PIPELINE_URL, json=payload, headers=headers, timeout=10)
+        response = requests.post(BHASHINI_PIPELINE_URL, json=payload, headers=headers, timeout=(1.5, 3.0))
         if response.status_code == 200:
             res_data = response.json()
             pipeline_res = res_data.get("pipelineResponse", [])
             if pipeline_res and "output" in pipeline_res[0]:
                 outputs = pipeline_res[0]["output"]
                 if outputs and "target" in outputs[0]:
-                    return outputs[0]["target"]
+                    result = outputs[0]["target"]
+                    _TRANSLATE_CACHE[cache_key] = result
+                    return result
     except Exception as e:
         print(f"[Bhashini Translate Error]: {e}")
 
@@ -116,14 +130,17 @@ def bhashini_tts(text: str, lang: str = "kn", gender: str = "female") -> str:
     if not text or not text.strip():
         return None
 
+    target_lang = normalize_lang_code(lang)
+    cache_key = f"{target_lang}:{gender}:{text.strip()}"
+    if cache_key in _TTS_CACHE:
+        return _TTS_CACHE[cache_key]
+
     headers = get_bhashini_headers()
     if not headers:
         return None
 
-    target_lang = normalize_lang_code(lang)
-
-    # If text is in English but target language is non-English, translate first so TTS speaks local language
-    if target_lang != "en" and any(c.isascii() and c.isalpha() for c in text[:30]):
+    # Only translate if target is not English AND the text does NOT already contain Indic characters
+    if target_lang != "en" and not is_indic_text(text) and any(c.isascii() and c.isalpha() for c in text):
         try:
             text = bhashini_translate(text, target_lang=target_lang, source_lang="en")
         except Exception:
@@ -147,14 +164,16 @@ def bhashini_tts(text: str, lang: str = "kn", gender: str = "female") -> str:
     }
 
     try:
-        response = requests.post(BHASHINI_PIPELINE_URL, json=payload, headers=headers, timeout=12)
+        response = requests.post(BHASHINI_PIPELINE_URL, json=payload, headers=headers, timeout=(1.5, 3.0))
         if response.status_code == 200:
             res_data = response.json()
             pipeline_res = res_data.get("pipelineResponse", [])
             if pipeline_res and "audio" in pipeline_res[0]:
                 audio_list = pipeline_res[0]["audio"]
                 if audio_list and "audioContent" in audio_list[0]:
-                    return audio_list[0]["audioContent"]
+                    audio_b64 = audio_list[0]["audioContent"]
+                    _TTS_CACHE[cache_key] = audio_b64
+                    return audio_b64
     except Exception as e:
         print(f"[Bhashini TTS Error]: {e}")
 

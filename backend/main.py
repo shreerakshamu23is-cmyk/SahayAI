@@ -20,6 +20,7 @@ from modules.voice import (
     bhashini_asr,
 )
 import os
+import asyncio
 from PIL import Image
 import io as _io
 import traceback
@@ -230,24 +231,63 @@ def get_all_users(db: DBSession = Depends(get_db)):
 
 # --- HELPER FUNCTIONS ---
 
+# --- HELPER FUNCTIONS ---
+
+_YOUTUBE_CACHE = {}
+
 def get_youtube_video_for_query(query: str):
+    if query in _YOUTUBE_CACHE:
+        return _YOUTUBE_CACHE[query]
     search_url = f"https://www.youtube.com/results?search_query={quote_plus(query)}"
     try:
         request = Request(search_url, headers={"User-Agent": "Mozilla/5.0"})
-        html = urlopen(request, timeout=10).read().decode("utf-8", errors="ignore")
+        html = urlopen(request, timeout=3).read().decode("utf-8", errors="ignore")
         match = re.search(r'"videoId":"([^"]+)"', html)
         if not match:
-            return {"search_url": search_url}
+            res = {"search_url": search_url}
+            _YOUTUBE_CACHE[query] = res
+            return res
 
         video_id = match.group(1)
-        return {
+        res = {
             "title": query.title(),
             "url": f"https://www.youtube.com/watch?v={video_id}",
             "embed_url": f"https://www.youtube.com/embed/{video_id}",
             "search_url": search_url,
         }
+        _YOUTUBE_CACHE[query] = res
+        return res
     except Exception:
         return {"search_url": search_url}
+
+
+def ensure_clean_completion(text: str) -> str:
+    """Ensures LLM output doesn't end with an incomplete hanging sentence or dangling list number."""
+    if not text:
+        return text
+    text = text.strip()
+
+    # Remove dangling list item at the end (e.g. "\n3." or "\n3" or "\n- " or "\n*")
+    text = re.sub(r'(\n|\s)+\d+[\.\)]\s*$', '', text).strip()
+    text = re.sub(r'(\n|\s)+[-\*•]\s*$', '', text).strip()
+
+    # If trailing punctuation is comma, colon, semicolon, hyphen, strip it
+    text = re.sub(r'[,;:\-—]\s*$', '', text).strip()
+
+    # If it already ends with proper sentence punctuation, return it
+    if text.endswith(('.', '!', '?', '।')):
+        return text
+
+    # If multi-line and the last line is a cut-off fragment, trim back to the last complete sentence
+    lines = text.split('\n')
+    if len(lines) > 1:
+        last_line = lines[-1].strip()
+        if not last_line.endswith(('.', '!', '?', '।')):
+            prev_lines = [l for l in lines[:-1] if l.strip()]
+            if prev_lines and any(prev_lines[-1].strip().endswith(p) for p in ('.', '!', '?', '।')):
+                return '\n'.join(lines[:-1]).strip()
+
+    return text + '.'
 
 
 try:
@@ -272,9 +312,11 @@ async def voice_assistant(
     system_prompt = (
         f"You are SahayAI, a direct healthcare voice assistant for {name}. "
         f"You MUST strictly reply in the user's preferred language: {language}. "
-        f"Provide direct answers only, with no filler words. "
-        f"If the user asks to navigate or open prescriptions, medical records, government health schemes, user profile, or logout, "
-        f"include NAVIGATE:prescription, NAVIGATE:records, NAVIGATE:schemes, NAVIGATE:profile, or NAVIGATE:logout in your reply."
+        f"Provide direct, concise, and helpful answers only (around 2 to 3 points). "
+        f"Always complete every sentence and close the answer properly with appropriate punctuation. Never leave thoughts, sentences, or numbered lists incomplete. "
+        f"ONLY include navigation tags (NAVIGATE:prescription, NAVIGATE:records, NAVIGATE:schemes, NAVIGATE:profile, or NAVIGATE:logout) "
+        f"if the user explicitly asks to open, view, or navigate to that section. "
+        f"Never include NAVIGATE tags for general healthcare advice, symptoms, or home remedies."
     )
 
     reply_final = ""
@@ -294,7 +336,7 @@ async def voice_assistant(
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": msg_raw}
                     ],
-                    max_tokens=80,
+                    max_tokens=350,
                     temperature=0
                 )
                 if response and response.choices:
@@ -320,19 +362,27 @@ async def voice_assistant(
         navigate_to = "logout"
         reply_final = reply_final.replace("NAVIGATE:logout", "").strip()
 
+    # Ensure response sentences are cleanly finished and closed
+    reply_final = ensure_clean_completion(reply_final)
+
     # Fallback navigation check if not caught by LLM output
     msg_lower = msg_raw.lower()
     if not navigate_to:
-        if any(k in msg_lower for k in ["prescription", "tablet", "medicine", "dawai", "aushadh", "mathre"]):
-            navigate_to = "prescription"
-        elif any(k in msg_lower for k in ["record", "report", "history", "dakhalegalu", "dastavez", "file"]):
-            navigate_to = "records"
-        elif any(k in msg_lower for k in ["scheme", "yojana", "yojane", "jan aushadhi", "ayushman", "government"]):
-            navigate_to = "schemes"
-        elif any(k in msg_lower for k in ["profile", "account", "details", "khata"]):
-            navigate_to = "profile"
-        elif any(k in msg_lower for k in ["logout", "exit", "bye"]):
-            navigate_to = "logout"
+        nav_intent = any(k in msg_lower for k in [
+            "open", "go to", "show", "navigate", "view", "ತೆರೆ", "ಹೋಗು", "ತೋರಿಸು", "kholo", "dekho", "chalo"
+        ]) or len(msg_lower.split()) <= 2
+
+        if nav_intent:
+            if any(k in msg_lower for k in ["prescription", "tablet", "medicine", "dawai", "aushadh", "mathre"]):
+                navigate_to = "prescription"
+            elif any(k in msg_lower for k in ["record", "report", "history", "dakhalegalu", "dastavez", "file"]):
+                navigate_to = "records"
+            elif any(k in msg_lower for k in ["scheme", "yojana", "yojane", "jan aushadhi", "ayushman", "government"]):
+                navigate_to = "schemes"
+            elif any(k in msg_lower for k in ["profile", "account", "details", "khata"]):
+                navigate_to = "profile"
+            elif any(k in msg_lower for k in ["logout", "exit", "bye"]):
+                navigate_to = "logout"
 
     # Fallback reply generation if LLM is unavailable or returned empty string
     if not reply_final:
@@ -357,39 +407,65 @@ async def voice_assistant(
             except Exception:
                 pass
 
-    # Check for YouTube remedy video intent
+    # Check for YouTube remedy video intent (multilingual: Kannada, Hindi, English)
     videos = []
     video_search_url = None
     search_query = None
-    if any(k in msg_lower for k in ["headache", "head ache", "head pain", "sir dard"]):
+
+    cough_keywords = [
+        "cough", "caugh", "cold", "sore throat", "throat", "ಗಂಟಲು",
+        "ಕೆಮ್ಮು", "kemmu", "ನೆಗಡಿ", "negadi", "ಕಫ", "kapha", "khasi", "khansi"
+    ]
+    fever_keywords = ["fever", "bukhar", "ಜ್ವರ", "jwara", "taap"]
+    headache_keywords = ["headache", "head ache", "head pain", "sir dard", "sar dard", "ತಲೆನೋವು", "thale novu", "talenovu"]
+    backpain_keywords = ["back pain", "backache", "kamar dard", "ಬೆನ್ನು ನೋವು", "bennu novu"]
+    stomach_keywords = ["stomach", "indigestion", "acidity", "pet dard", "ಹೊಟ್ಟೆ ನೋವು", "hotte novu"]
+
+    if any(k in msg_lower for k in headache_keywords):
         search_query = "home remedies for headache"
-    elif any(k in msg_lower for k in ["back pain", "backache", "kamar dard"]):
+    elif any(k in msg_lower for k in backpain_keywords):
         search_query = "home remedies for back pain"
-    elif any(k in msg_lower for k in ["fever", "bukhar"]):
+    elif any(k in msg_lower for k in fever_keywords):
         search_query = "home remedies for fever"
-    elif any(k in msg_lower for k in ["cough", "cold", "sore throat"]):
+    elif any(k in msg_lower for k in cough_keywords):
         search_query = "home remedies for cough and cold"
-    elif any(k in msg_lower for k in ["stomach", "indigestion", "acidity"]):
+    elif any(k in msg_lower for k in stomach_keywords):
         search_query = "home remedies for stomach pain"
 
     if search_query:
+        # User is seeking symptom advice or remedy video; do not redirect/navigate away
+        navigate_to = None
+
+    # Fetch YouTube remedy video and Bhashini TTS concurrently with strict timeouts
+    async def _fetch_video():
+        if not search_query:
+            return []
         lang_search = {"kannada": "ಕನ್ನಡ", "hindi": "hindi", "english": ""}
         lang_suffix = lang_search.get(target_lang, "")
         localized_query = f"{search_query} {lang_suffix}".strip()
-        video_info = get_youtube_video_for_query(localized_query)
-        if video_info:
-            videos = [video_info]
-            video_search_url = video_info.get("search_url")
+        try:
+            video_info = await asyncio.wait_for(
+                asyncio.to_thread(get_youtube_video_for_query, localized_query),
+                timeout=2.2
+            )
+            return [video_info] if video_info else []
+        except Exception:
+            return []
 
-    # Generate Bhashini TTS Audio
-    audio_base64 = None
-    bhashini_used = False
-    try:
-        if is_bhashini_available():
-            audio_base64 = bhashini_tts(reply_final, lang=target_lang)
-            bhashini_used = True
-    except Exception as e:
-        print("[Voice Assistant Bhashini TTS Error]:", e)
+    async def _fetch_tts():
+        if not is_bhashini_available() or not reply_final:
+            return None
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(bhashini_tts, reply_final, target_lang),
+                timeout=2.2
+            )
+        except Exception:
+            return None
+
+    videos, audio_base64 = await asyncio.gather(_fetch_video(), _fetch_tts())
+    video_search_url = videos[0].get("search_url") if videos else None
+    bhashini_used = audio_base64 is not None
 
     return {
         "reply": reply_final,
